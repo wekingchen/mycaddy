@@ -1,5 +1,3 @@
-
-```markdown
 # NaiveProxy Caddy Build
 
 [![GitHub Release](https://img.shields.io/github/v/release/wekingchen/mycaddy?style=flat-square)](https://github.com/wekingchen/mycaddy/releases)
