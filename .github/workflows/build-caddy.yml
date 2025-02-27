@@ -73,7 +73,7 @@ jobs:
       - name: Install xcaddy
         if: steps.check-update.outputs.needs_build == 'true'
         run: |
-          set -x  # 启用调试模式，显示命令
+          set -x
           echo "Installing xcaddy..."
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest || { echo "Failed to install xcaddy"; exit 1; }
           ls -lh $GOPATH/bin/xcaddy || { echo "xcaddy binary not found in $GOPATH/bin"; exit 1; }
@@ -85,9 +85,9 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           GOOS: linux
         run: |
-          set -x  # 启用调试模式
-          # 设置 Go 代理
-          go env -w GOPROXY=https://goproxy.cn,direct
+          set -x
+          # 设置 Go 代理，优先使用 proxy.golang.org，失败则直接从源下载
+          go env -w GOPROXY="https://proxy.golang.org,direct"
 
           # 克隆 forwardproxy 仓库并切换到 naive 分支
           echo "Cloning forwardproxy repository..."
@@ -95,30 +95,34 @@ jobs:
           cd forwardproxy
           echo "Checking out naive branch..."
           git checkout naive || { echo "Failed to checkout naive branch"; exit 1; }
-          git log -1  # 调试：显示当前提交
+          git log -1
 
-          # 编译 Caddy
+          # 编译 Caddy，添加重试机制
           echo "Building Caddy for ${{ matrix.arch }}..."
-          $GOPATH/bin/xcaddy build \
-            --with github.com/mholt/caddy-l4 \
-            --with github.com/caddy-dns/cloudflare \
-            --with github.com/caddy-dns/dnspod \
-            --with github.com/caddy-dns/duckdns \
-            --with github.com/mholt/caddy-dynamicdns \
-            --with github.com/mholt/caddy-events-exec \
-            --with github.com/WeidiDeng/caddy-cloudflare-ip \
-            --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
-            --with github.com/mholt/caddy-webdav \
-            --with ./ \
-            --with github.com/imgk/caddy-trojan \
-            --output ../caddy-${{ matrix.arch }} || { echo "xcaddy build failed"; exit 1; }
+          for i in {1..3}; do
+            $GOPATH/bin/xcaddy build \
+              --with github.com/mholt/caddy-l4 \
+              --with github.com/caddy-dns/cloudflare \
+              --with github.com/caddy-dns/dnspod \
+              --with github.com/caddy-dns/duckdns \
+              --with github.com/mholt/caddy-dynamicdns \
+              --with github.com/mholt/caddy-events-exec \
+              --with github.com/WeidiDeng/caddy-cloudflare-ip \
+              --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
+              --with github.com/mholt/caddy-webdav \
+              --with ./ \
+              --with github.com/imgk/caddy-trojan \
+              --output ../caddy-${{ matrix.arch }} && break
+            echo "Build attempt $i failed, retrying in 5 seconds..."
+            sleep 5
+          done || { echo "xcaddy build failed after 3 attempts"; exit 1; }
 
           # 保存编译结果
           cd ..
           echo "Saving build artifacts..."
           mkdir -p artifacts || { echo "Failed to create artifacts directory"; exit 1; }
           mv caddy-${{ matrix.arch }} artifacts/ || { echo "Failed to move caddy binary"; exit 1; }
-          ls -lh artifacts/  # 调试：列出文件
+          ls -lh artifacts/
 
       - name: Upload artifact
         if: steps.check-update.outputs.needs_build == 'true'
