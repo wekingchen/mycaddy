@@ -1,7 +1,4 @@
 
-
-以下是根据你的 GitHub Actions 工作流设计的精简版 README.md 模板：
-
 ```markdown
 # NaiveProxy Caddy Build
 
