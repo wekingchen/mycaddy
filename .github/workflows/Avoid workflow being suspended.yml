@@ -8,6 +8,8 @@ on:
 jobs:
   auto_renew:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: 'Checkout codes'
         uses: actions/checkout@v2
