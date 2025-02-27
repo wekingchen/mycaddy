@@ -9,26 +9,31 @@ jobs:
   auto_renew:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write  # 确保有写入权限
+
     steps:
       - name: 'Checkout codes'
-        uses: actions/checkout@v2
-      
-      - name: 'Avoid Github Workflow being suspended'
-        run: echo $(cat /proc/sys/kernel/random/uuid) > UUID.txt
-      
+        uses: actions/checkout@v4  # 升级到最新版
+
+      - name: 'Generate UUID'
+        run: echo $(uuidgen) > UUID.txt  # 改用跨平台命令
+
       - name: 'Commit Files'
         id: commit
         run: |
-          git config --local user.email "me@kmou424.moe"
-          git config --local user.name "kmou424"
+          git config user.email "me@kmou424.moe"
+          git config user.name "kmou424"
           git add .
-          git diff --quiet && git diff --staged --quiet || git commit -am 'avoid being suspended'
-          echo ::set-output name=status::success
-           
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "status=no_change" >> $GITHUB_OUTPUT
+          else
+            git commit -m 'update UUID'
+            echo "status=success" >> $GITHUB_OUTPUT
+          fi
+
       - name: 'GitHub Push'
-        if: steps.commit.output.status != 'success'
+        if: steps.commit.outputs.status == 'success'  # 仅在提交成功时推送
         uses: ad-m/github-push-action@v0.6.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: ${{ github.ref }}
+          branch: main  # 明确指定分支
