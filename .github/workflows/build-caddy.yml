@@ -104,13 +104,21 @@ jobs:
         with:
           path: artifacts
 
+      - name: 获取 Caddy 最新版本
+        id: get_caddy_version
+        run: |
+          CADDY_VERSION=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r '.tag_name')
+          CADDY_VERSION=${CADDY_VERSION#v}  # 去掉 v 前缀
+          echo "Caddy 最新版本: $CADDY_VERSION"
+          echo "CADDY_VERSION=$CADDY_VERSION" >> $GITHUB_ENV
+
       - name: 生成 Release 版本号
         id: version
         run: |
           if [[ -n "${{ github.event.inputs.custom_tag }}" ]]; then
             RELEASE_TAG="${{ github.event.inputs.custom_tag }}"
           else
-            RELEASE_TAG="naive-$(date +%Y%m%d-%H%M%S)"
+            RELEASE_TAG="v${{ env.CADDY_VERSION }}-$(date +%Y%m%d-%H%M%S)"
           fi
           echo "New tag: $RELEASE_TAG"
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_ENV
@@ -143,7 +151,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.release_tag }}
-          name: "NaiveProxy Caddy v${{ env.release_tag }}"
+          name: "NaiveProxy Caddy ${{ env.release_tag }}"
           body_path: release_notes.txt
           files: |
             artifacts/caddy_amd64/caddy_amd64
