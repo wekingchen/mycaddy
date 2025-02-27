@@ -94,7 +94,7 @@ jobs:
           git checkout naive || { echo "Failed to checkout naive branch"; exit 1; }
           git log -1
 
-          # 编译 Caddy，添加重试机制
+          # 编译 Caddy，使用本地 forwardproxy 代码
           echo "Building Caddy for ${{ matrix.arch }}..."
           for i in {1..3}; do
             $GOPATH/bin/xcaddy build \
@@ -107,7 +107,7 @@ jobs:
               --with github.com/WeidiDeng/caddy-cloudflare-ip \
               --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
               --with github.com/mholt/caddy-webdav \
-              --with ./ \
+              --with github.com/caddyserver/forwardproxy=./ \
               --with github.com/imgk/caddy-trojan \
               --output ../caddy-${{ matrix.arch }} && break
             echo "Build attempt $i failed, retrying in 5 seconds..."
