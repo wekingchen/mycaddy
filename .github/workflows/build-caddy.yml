@@ -86,9 +86,6 @@ jobs:
           GOOS: linux
         run: |
           set -x
-          # 设置 Go 代理，优先使用 proxy.golang.org，失败则直接从源下载
-          go env -w GOPROXY="https://proxy.golang.org,direct"
-
           # 克隆 forwardproxy 仓库并切换到 naive 分支
           echo "Cloning forwardproxy repository..."
           git clone https://github.com/klzgrad/forwardproxy.git || { echo "Failed to clone forwardproxy"; exit 1; }
