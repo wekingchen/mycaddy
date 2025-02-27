@@ -122,7 +122,7 @@ jobs:
           🚀 **NaiveProxy Caddy Release - ${{ env.release_tag }}**
           
           **📌 包含插件列表：**
-          - ✅ forwardproxy（正向代理）
+          - ✅ forwardproxy（NaïveProxy代理）
           - ✅ caddy-l4（TCP/UDP 代理）
           - ✅ caddy-dns/cloudflare（Cloudflare DNS 解析）
           - ✅ caddy-dns/dnspod（DNSPod 解析）
