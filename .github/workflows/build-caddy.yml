@@ -54,28 +54,10 @@ jobs:
           cd $GITHUB_WORKSPACE/forwardproxy
           echo "Commit: $(git rev-parse HEAD)"
 
-      - name: 生成 `go.sum`（确保依赖文件存在）
+      - name: 运行 `go mod tidy` 确保 `go.sum` 存在
         run: |
           cd $GITHUB_WORKSPACE/forwardproxy
           go mod tidy
-          if [ ! -f go.sum ]; then
-            echo "go.sum not found! Creating an empty one."
-            touch go.sum
-          fi
-
-      - name: 复制 `go.sum` 到工作目录（防止缓存失败）
-        run: cp $GITHUB_WORKSPACE/forwardproxy/go.sum $GITHUB_WORKSPACE/go.sum
-
-      - name: 清理 Go 依赖缓存（防止 `Permission Denied`）
-        run: go clean -modcache
-
-      - name: 缓存 Go 依赖（防止 409 Conflict）
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ matrix.arch }}-${{ github.run_id }}-${{ hashFiles('go.sum') }}
 
       - name: 安装 xcaddy
         run: |
