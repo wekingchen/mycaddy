@@ -1,172 +1,136 @@
-name: Check and Build Caddy with naive forwardproxy
+name: Daily NaiveProxy Build
 
+# 触发条件：每日定时运行 + 手动触发
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天 UTC 时间 00:00（北京时间 08:00）
-  workflow_dispatch:     # 手动触发
+    - cron: '0 0 * * *' # 每天 UTC 00:00 执行（可根据需要调整时区）
+  workflow_dispatch: # 支持手动触发
 
 jobs:
   check-and-build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [amd64, arm64]  # 支持双架构
-    outputs:
-      needs_build: ${{ steps.check-update.outputs.needs_build }}
-      sha: ${{ steps.get-sha.outputs.sha }}
-
     steps:
+      # 检出当前仓库代码
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify GitHub CLI
+      # 获取 forwardproxy 最新提交 SHA
+      - name: Fetch forwardproxy latest commit
+        id: fetch-commit
         run: |
-          gh --version
-          echo "GITHUB_TOKEN=$GITHUB_TOKEN" >> $GITHUB_ENV
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get latest commit SHA from klzgrad/forwardproxy naive branch
-        id: get-sha
-        run: |
-          LATEST_SHA=$(gh api repos/klzgrad/forwardproxy/commits/naive -q '.sha')
-          echo "Latest SHA: $LATEST_SHA"
-          echo "sha=$LATEST_SHA" >> $GITHUB_OUTPUT
-
-      - name: Check if update is needed
-        id: check-update
-        run: |
-          LAST_SHA=""
-          if [ -f last_known_sha.txt ]; then
-            LAST_SHA=$(cat last_known_sha.txt)
+          LATEST_SHA=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/master | jq -r '.sha')
+          echo "LATEST_SHA=$LATEST_SHA" >> $GITHUB_ENV
+          # 检查是否已有记录的 SHA 文件
+          if [ -f "forwardproxy-sha.txt" ]; then
+            PREVIOUS_SHA=$(cat forwardproxy-sha.txt)
+            echo "PREVIOUS_SHA=$PREVIOUS_SHA" >> $GITHUB_ENV
+          else
+            echo "PREVIOUS_SHA=none" >> $GITHUB_ENV
           fi
-          echo "Last known SHA: $LAST_SHA"
-          echo "Current SHA: ${{ steps.get-sha.outputs.sha }}"
-          if [ "$LAST_SHA" != "${{ steps.get-sha.outputs.sha }}" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "Update detected or manually triggered, proceeding with build."
-            echo "needs_build=true" >> $GITHUB_OUTPUT
+
+      # 判断是否需要编译
+      - name: Check for updates
+        id: check-updates
+        run: |
+          if [ "${{ env.LATEST_SHA }}" != "${{ env.PREVIOUS_SHA }}" ]; then
+            echo "Update detected, proceeding with build."
+            echo "needs_build=true" >> $GITHUB_ENV
           else
             echo "No update detected, skipping build."
-            echo "needs_build=false" >> $GITHUB_OUTPUT
+            echo "needs_build=false" >> $GITHUB_ENV
           fi
 
-      - name: Setup Go environment
-        if: steps.check-update.outputs.needs_build == 'true'
-        env:
-          GOARCH: ${{ matrix.arch }}
-          GOOS: linux
-        run: |
-          # 获取最新稳定版 Go
-          LATEST_GO=$(curl -s https://go.dev/dl/?mode=json | jq -r '[.[] | select(.stable==true)][0].version')
-          echo "Using Go version: $LATEST_GO"
+      # 设置最新稳定版 Go 环境
+      - name: Set up Go
+        if: env.needs_build == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable' # 始终使用最新稳定版 Go
 
-          # 设置 Go 环境
-          echo "Setting up Go $LATEST_GO..."
-          curl -sL "https://go.dev/dl/$LATEST_GO.linux-amd64.tar.gz" | sudo tar -C /usr/local -xz
-          export PATH=/usr/local/go/bin:$PATH
-          export GOPATH=/home/runner/go
-          export PATH=$GOPATH/bin:$PATH
-          go version
-          echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-          echo "PATH=$PATH" >> $GITHUB_ENV
-
-      - name: Install xcaddy
-        if: steps.check-update.outputs.needs_build == 'true'
+      # 安装依赖并克隆 forwardproxy
+      - name: Install dependencies and clone forwardproxy
+        if: env.needs_build == 'true'
         run: |
-          set -x
-          echo "Installing xcaddy..."
-          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest || { echo "Failed to install xcaddy"; exit 1; }
-          ls -lh $GOPATH/bin/xcaddy || { echo "xcaddy binary not found in $GOPATH/bin"; exit 1; }
-          which xcaddy
-
-      - name: Build Caddy for ${{ matrix.arch }}
-        if: steps.check-update.outputs.needs_build == 'true'
-        env:
-          GOARCH: ${{ matrix.arch }}
-          GOOS: linux
-        run: |
-          set -x
-          # 克隆 forwardproxy 仓库并切换到 naive 分支
-          echo "Cloning forwardproxy repository..."
-          git clone https://github.com/klzgrad/forwardproxy.git || { echo "Failed to clone forwardproxy"; exit 1; }
+          # 安装 jq（用于解析 JSON）
+          sudo apt-get update && sudo apt-get install -y jq
+          # 安装 xcaddy
+          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+          # 确保 xcaddy 在 PATH 中
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+          # 克隆 forwardproxy
+          git clone https://github.com/klzgrad/forwardproxy.git
           cd forwardproxy
-          echo "Checking out naive branch..."
-          git checkout naive || { echo "Failed to checkout naive branch"; exit 1; }
-          git log -1
 
-          # 编译 Caddy，使用本地 forwardproxy 代码
-          echo "Building Caddy for ${{ matrix.arch }}..."
-          for i in {1..3}; do
-            $GOPATH/bin/xcaddy build \
-              --with github.com/mholt/caddy-l4 \
-              --with github.com/caddy-dns/cloudflare \
-              --with github.com/caddy-dns/dnspod \
-              --with github.com/caddy-dns/duckdns \
-              --with github.com/mholt/caddy-dynamicdns \
-              --with github.com/mholt/caddy-events-exec \
-              --with github.com/WeidiDeng/caddy-cloudflare-ip \
-              --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
-              --with github.com/mholt/caddy-webdav \
-              --with github.com/caddyserver/forwardproxy=./ \
-              --with github.com/imgk/caddy-trojan \
-              --output ../caddy-${{ matrix.arch }} && break
-            echo "Build attempt $i failed, retrying in 5 seconds..."
-            sleep 5
-          done || { echo "xcaddy build failed after 3 attempts"; exit 1; }
+      # 编译 amd64 版本
+      - name: Build for amd64
+        if: env.needs_build == 'true'
+        run: |
+          cd forwardproxy
+          export GOOS=linux
+          export GOARCH=amd64
+          xcaddy build --output ../caddy_amd64 \
+            --with github.com/mholt/caddy-l4 \
+            --with github.com/caddy-dns/cloudflare \
+            --with github.com/caddy-dns/dnspod \
+            --with github.com/caddy-dns/duckdns \
+            --with github.com/mholt/caddy-dynamicdns \
+            --with github.com/mholt/caddy-events-exec \
+            --with github.com/WeidiDeng/caddy-cloudflare-ip \
+            --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
+            --with github.com/mholt/caddy-webdav \
+            --with github.com/caddyserver/forwardproxy@master=$PWD \
+            --with github.com/imgk/caddy-trojan
 
-          # 保存编译结果
-          cd ..
-          echo "Saving build artifacts..."
-          mkdir -p artifacts || { echo "Failed to create artifacts directory"; exit 1; }
-          mv caddy-${{ matrix.arch }} artifacts/ || { echo "Failed to move caddy binary"; exit 1; }
-          ls -lh artifacts/
+      # 编译 arm64 版本
+      - name: Build for arm64
+        if: env.needs_build == 'true'
+        run: |
+          cd forwardproxy
+          export GOOS=linux
+          export GOARCH=arm64
+          xcaddy build --output ../caddy_arm64 \
+            --with github.com/mholt/caddy-l4 \
+            --with github.com/caddy-dns/cloudflare \
+            --with github.com/caddy-dns/dnspod \
+            --with github.com/caddy-dns/duckdns \
+            --with github.com/mholt/caddy-dynamicdns \
+            --with github.com/mholt/caddy-events-exec \
+            --with github.com/WeidiDeng/caddy-cloudflare-ip \
+            --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
+            --with github.com/mholt/caddy-webdav \
+            --with github.com/caddyserver/forwardproxy@master=$PWD \
+            --with github.com/imgk/caddy-trojan
 
-      - name: Upload artifact
-        if: steps.check-update.outputs.needs_build == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: caddy-${{ matrix.arch }}
-          path: artifacts/caddy-${{ matrix.arch }}
+      # 验证二进制文件
+      - name: Verify binaries
+        if: env.needs_build == 'true'
+        run: |
+          file ./caddy_amd64
+          file ./caddy_arm64
 
-  release:
-    needs: check-and-build
-    runs-on: ubuntu-latest
-    if: needs.check-and-build.outputs.needs_build == 'true'
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            artifacts/caddy-amd64/caddy-amd64
-            artifacts/caddy-arm64/caddy-arm64
-          name: Caddy with naive ${{ needs.check-and-build.outputs.sha }}
-          tag_name: naive-${{ needs.check-and-build.outputs.sha }}
-          body: |
-            Built with naive forwardproxy commit: ${{ needs.check-and-build.outputs.sha }}
-            Triggered by: ${{ github.event_name }}
-          draft: false
-          prerelease: false
+      # 创建 Release 并上传二进制文件
+      - name: Create and upload release
+        if: env.needs_build == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  update-sha:
-    needs: check-and-build
-    runs-on: ubuntu-latest
-    if: needs.check-and-build.outputs.needs_build == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Update last known SHA
         run: |
-          echo "${{ needs.check-and-build.outputs.sha }}" > last_known_sha.txt
-          git config --global user.name "github-actions"
-          git config --global user.email "actions@github.com"
-          git add last_known_sha.txt
-          git commit -m "Update last_known_sha.txt to ${{ needs.check-and-build.outputs.sha }}"
+          # 生成版本号（基于日期和 SHA 前 7 位）
+          VERSION="v$(date +%Y%m%d)-${{ env.LATEST_SHA:0:7 }}"
+          # 创建 Release
+          gh release create "$VERSION" \
+            --title "NaiveProxy $VERSION" \
+            --notes "Built with forwardproxy commit ${{ env.LATEST_SHA }}" \
+            --draft=false \
+            ./caddy_amd64 ./caddy_arm64
+          # 更新 SHA 记录
+          echo "${{ env.LATEST_SHA }}" > forwardproxy-sha.txt
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add forwardproxy-sha.txt
+          git commit -m "Update forwardproxy SHA to ${{ env.LATEST_SHA }}"
           git push
+
+      # 如果无更新，输出提示信息
+      - name: Skip build message
+        if: env.needs_build == 'false'
+        run: echo "No new commits in forwardproxy, build skipped."
