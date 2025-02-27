@@ -19,7 +19,6 @@ jobs:
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
           echo "Latest commit: $LATEST_COMMIT"
 
-          # 获取上一次 Release 记录的 commit
           PREVIOUS_COMMIT=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body' | grep 'Commit:' | awk '{print $2}')
 
@@ -49,21 +48,6 @@ jobs:
           echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
           echo "PATH=$GOPATH/bin:$PATH" >> $GITHUB_ENV
 
-      - name: 还原 Go 依赖缓存（加速构建）
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: 安装 xcaddy
-        run: |
-          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-          echo "$HOME/go/bin" >> $GITHUB_PATH
-
       - name: 克隆 forwardproxy naive 分支
         run: |
           git clone --branch naive --depth 1 https://github.com/klzgrad/forwardproxy.git $GITHUB_WORKSPACE/forwardproxy
@@ -74,6 +58,19 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/forwardproxy
           go mod tidy
+
+      - name: 还原 Go 依赖缓存（加速构建）
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ matrix.arch }}-${{ hashFiles('forwardproxy/go.sum') }}
+
+      - name: 安装 xcaddy
+        run: |
+          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
 
       - name: 编译 Caddy (${{ matrix.arch }})
         run: |
