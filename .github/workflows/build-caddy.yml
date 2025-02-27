@@ -1,0 +1,147 @@
+name: Check and Build Caddy with naive forwardproxy
+
+# 触发条件：每日运行
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天 UTC 时间 00:00（北京时间 08:00）
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]  # 支持双架构
+    outputs:
+      needs_build: ${{ steps.check-update.outputs.needs_build }}
+      sha: ${{ steps.get-sha.outputs.sha }}
+
+    steps:
+      # 检出当前仓库
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 设置 GitHub CLI
+      - name: Setup GitHub CLI
+        uses: github/setup-gh-cli@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 获取 naive 分支的最新提交 SHA
+      - name: Get latest commit SHA from klzgrad/forwardproxy naive branch
+        id: get-sha
+        run: |
+          LATEST_SHA=$(gh api repos/klzgrad/forwardproxy/commits/naive -q '.sha')
+          echo "Latest SHA: $LATEST_SHA"
+          echo "sha=$LATEST_SHA" >> $GITHUB_OUTPUT
+
+      # 检查是否需要编译（对比本地记录的 SHA）
+      - name: Check if update is needed
+        id: check-update
+        run: |
+          LAST_SHA=""
+          if [ -f last_known_sha.txt ]; then
+            LAST_SHA=$(cat last_known_sha.txt)
+          fi
+          echo "Last known SHA: $LAST_SHA"
+          echo "Current SHA: ${{ steps.get-sha.outputs.sha }}"
+          if [ "$LAST_SHA" != "${{ steps.get-sha.outputs.sha }}" ]; then
+            echo "Update detected, proceeding with build."
+            echo "needs_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "No update detected, skipping build."
+            echo "needs_build=false" >> $GITHUB_OUTPUT
+          fi
+
+      # 如果有更新，执行编译
+      - name: Build Caddy for ${{ matrix.arch }}
+        if: steps.check-update.outputs.needs_build == 'true'
+        env:
+          GOARCH: ${{ matrix.arch }}
+          GOOS: linux
+        run: |
+          # 获取最新稳定版 Go
+          LATEST_GO=$(curl -s https://go.dev/dl/?mode=json | jq -r '[.[] | select(.stable==true)][0].version')
+          echo "Using Go version: $LATEST_GO"
+
+          # 设置 Go 环境
+          echo "Setting up Go $LATEST_GO..."
+          curl -sL "https://go.dev/dl/$LATEST_GO.linux-amd64.tar.gz" | sudo tar -C /usr/local -xz
+          export PATH=$PATH:/usr/local/go/bin
+          go version
+
+          # 安装 xcaddy
+          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+
+          # 设置 Go 代理（可选，国内环境建议启用）
+          go env -w GOPROXY=https://goproxy.cn,direct
+
+          # 编译 Caddy
+          ~/go/bin/xcaddy build \
+            --with github.com/mholt/caddy-l4 \
+            --with github.com/caddy-dns/cloudflare \
+            --with github.com/caddy-dns/dnspod \
+            --with github.com/caddy-dns/duckdns \
+            --with github.com/mholt/caddy-dynamicdns \
+            --with github.com/mholt/caddy-events-exec \
+            --with github.com/WeidiDeng/caddy-cloudflare-ip \
+            --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
+            --with github.com/mholt/caddy-webdav \
+            --with github.com/caddyserver/forwardproxy@master=github.com/klzgrad/forwardproxy@naive \
+            --with github.com/imgk/caddy-trojan \
+            --output caddy-${{ matrix.arch }}
+
+          # 保存编译结果
+          mkdir -p artifacts
+          mv caddy-${{ matrix.arch }} artifacts/
+
+      # 上传构建产物（如果有）
+      - name: Upload artifact
+        if: steps.check-update.outputs.needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: caddy-${{ matrix.arch }}
+          path: artifacts/caddy-${{ matrix.arch }}
+
+  release:
+    needs: check-and-build
+    runs-on: ubuntu-latest
+    if: needs.check-and-build.outputs.needs_build == 'true'  # 仅在编译发生时发布
+    steps:
+      # 下载所有构建产物
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # 创建 GitHub Release
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/caddy-amd64/caddy-amd64
+            artifacts/caddy-arm64/caddy-arm64
+          name: Caddy with naive ${{ needs.check-and-build.outputs.sha }}
+          tag_name: naive-${{ needs.check-and-build.outputs.sha }}
+          body: |
+            Built with naive forwardproxy commit: ${{ needs.check-and-build.outputs.sha }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-sha:
+    needs: check-and-build
+    runs-on: ubuntu-latest
+    if: needs.check-and-build.outputs.needs_build == 'true'  # 仅在编译发生时更新 SHA
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update last known SHA
+        run: |
+          echo "${{ needs.check-and-build.outputs.sha }}" > last_known_sha.txt
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add last_known_sha.txt
+          git commit -m "Update last_known_sha.txt to ${{ needs.check-and-build.outputs.sha }}"
+          git push
