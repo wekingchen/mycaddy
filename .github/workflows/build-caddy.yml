@@ -69,18 +69,23 @@ jobs:
           go version
 
           # 安装 xcaddy
-          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+          echo "Installing xcaddy..."
+          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest || { echo "Failed to install xcaddy"; exit 1; }
           which xcaddy  # 调试：确认 xcaddy 位置
 
-          # 设置 Go 代理（可选，国内环境建议启用）
+          # 设置 Go 代理
           go env -w GOPROXY=https://goproxy.cn,direct
 
           # 克隆 forwardproxy 仓库并切换到 naive 分支
-          git clone https://github.com/klzgrad/forwardproxy.git
+          echo "Cloning forwardproxy repository..."
+          git clone https://github.com/klzgrad/forwardproxy.git || { echo "Failed to clone forwardproxy"; exit 1; }
           cd forwardproxy
-          git checkout naive
+          echo "Checking out naive branch..."
+          git checkout naive || { echo "Failed to checkout naive branch"; exit 1; }
+          git log -1  # 调试：显示当前提交
 
           # 编译 Caddy
+          echo "Building Caddy for ${{ matrix.arch }}..."
           $GOPATH/bin/xcaddy build \
             --with github.com/mholt/caddy-l4 \
             --with github.com/caddy-dns/cloudflare \
@@ -93,12 +98,14 @@ jobs:
             --with github.com/mholt/caddy-webdav \
             --with ./ \
             --with github.com/imgk/caddy-trojan \
-            --output ../caddy-${{ matrix.arch }}
+            --output ../caddy-${{ matrix.arch }} || { echo "xcaddy build failed"; exit 1; }
 
           # 保存编译结果
           cd ..
-          mkdir -p artifacts
-          mv caddy-${{ matrix.arch }} artifacts/
+          echo "Saving build artifacts..."
+          mkdir -p artifacts || { echo "Failed to create artifacts directory"; exit 1; }
+          mv caddy-${{ matrix.arch }} artifacts/ || { echo "Failed to move caddy binary"; exit 1; }
+          ls -lh artifacts/  # 调试：列出文件
 
       - name: Upload artifact
         if: steps.check-update.outputs.needs_build == 'true'
