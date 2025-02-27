@@ -54,12 +54,12 @@ jobs:
           cd $GITHUB_WORKSPACE/forwardproxy
           echo "Commit: $(git rev-parse HEAD)"
 
-      - name: 生成 `go.sum`（防止缓存失败）
+      - name: 生成 `go.sum`（确保依赖文件存在）
         run: |
           cd $GITHUB_WORKSPACE/forwardproxy
           go mod tidy
 
-      - name: 还原 Go 依赖缓存（加速构建）
+      - name: 缓存 Go 依赖（加速构建）
         uses: actions/cache@v4
         with:
           path: |
