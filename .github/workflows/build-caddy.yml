@@ -12,10 +12,9 @@ jobs:
   check-updates:
     runs-on: ubuntu-latest
     outputs:
-      new_commit: ${{ steps.check_commit.outputs.new_commit }}
+      new_commit: ${{ env.NEW_COMMIT }}
     steps:
       - name: 获取 forwardproxy naive 分支的最新 commit
-        id: check_commit
         run: |
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
           echo "Latest commit: $LATEST_COMMIT"
@@ -26,17 +25,15 @@ jobs:
 
           echo "Previous commit: $PREVIOUS_COMMIT"
 
-          # 判断是否有新提交
           if [[ "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
-            echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
-            echo "::set-output name=new_commit::$LATEST_COMMIT"
+            echo "NEW_COMMIT=$LATEST_COMMIT" >> $GITHUB_ENV
           else
             echo "No new commit, skipping build."
+            exit 0
           fi
 
   build:
     needs: check-updates
-    if: needs.check-updates.outputs.new_commit != ''
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -52,6 +49,16 @@ jobs:
           echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
           echo "PATH=$GOPATH/bin:$PATH" >> $GITHUB_ENV
 
+      - name: 还原 Go 依赖缓存（加速构建）
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
       - name: 安装 xcaddy
         run: |
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
@@ -62,6 +69,11 @@ jobs:
           git clone --branch naive --depth 1 https://github.com/klzgrad/forwardproxy.git $GITHUB_WORKSPACE/forwardproxy
           cd $GITHUB_WORKSPACE/forwardproxy
           echo "Commit: $(git rev-parse HEAD)"
+
+      - name: 生成 `go.sum`（防止缓存失败）
+        run: |
+          cd $GITHUB_WORKSPACE/forwardproxy
+          go mod tidy
 
       - name: 编译 Caddy (${{ matrix.arch }})
         run: |
