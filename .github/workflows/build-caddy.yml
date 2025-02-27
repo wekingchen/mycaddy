@@ -115,14 +115,36 @@ jobs:
           echo "New tag: $RELEASE_TAG"
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_ENV
 
+      - name: 生成 Release 描述
+        id: release_body
+        run: |
+          cat <<EOF > release_notes.txt
+          🚀 **NaiveProxy Caddy Release - ${{ env.release_tag }}**
+          
+          **📌 包含插件列表：**
+          - ✅ forwardproxy（正向代理）
+          - ✅ caddy-l4（TCP/UDP 代理）
+          - ✅ caddy-dns/cloudflare（Cloudflare DNS 解析）
+          - ✅ caddy-dns/dnspod（DNSPod 解析）
+          - ✅ caddy-dns/duckdns（DuckDNS 解析）
+          - ✅ caddy-dynamicdns（动态 DNS 更新）
+          - ✅ caddy-events-exec（事件触发自动化）
+          - ✅ caddy-cloudflare-ip（Cloudflare IP 解析）
+          - ✅ caddy-trusted-cloudfront（CloudFront 可信代理）
+          - ✅ caddy-webdav（WebDAV 服务器）
+          - ✅ caddy-trojan（Trojan 协议支持）
+
+          **🔍 Commit:** ${{ needs.check-updates.outputs.new_commit }}
+
+          📥 **[下载二进制文件](https://github.com/${{ github.repository }}/releases/tag/${{ env.release_tag }})**
+          EOF
+
       - name: 创建 Release 并上传二进制文件
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.release_tag }}
           name: "NaiveProxy Caddy v${{ env.release_tag }}"
-          body: |
-            🚀 **自动构建的 Caddy 版本**，包含 forwardproxy 和多个插件。
-            🔍 **Commit:** ${{ needs.check-updates.outputs.new_commit }}
+          body_path: release_notes.txt
           files: |
             artifacts/caddy_amd64/caddy_amd64
             artifacts/caddy_arm64/caddy_arm64
