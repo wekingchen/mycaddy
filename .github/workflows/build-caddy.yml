@@ -3,10 +3,15 @@ name: Build and Release Caddy with Forwardproxy
 on:
   schedule:
     - cron: '0 0 * * *'  # 每天 UTC 00:00 运行
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:  # 允许手动触发，并可指定 tag
+    inputs:
+      custom_tag:
+        description: "自定义 Release Tag（可选）"
+        required: false
+        default: ""
 
 permissions:
-  contents: write  # 赋予 GitHub Token 创建 Release 的权限
+  contents: write  # 允许创建 Release
 
 jobs:
   check-updates:
@@ -43,33 +48,29 @@ jobs:
         with:
           go-version: 'stable'
 
-      - name: 设置环境变量
+      - name: 克隆 forwardproxy naive 分支（只拉取最新 commit，加快速度）
         run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "PATH=$GOPATH/bin:$PATH" >> $GITHUB_ENV
-
-      - name: 克隆 forwardproxy naive 分支
-        run: |
-          git clone --branch naive --depth 1 https://github.com/klzgrad/forwardproxy.git $GITHUB_WORKSPACE/forwardproxy
-          cd $GITHUB_WORKSPACE/forwardproxy
+          git clone --branch naive --depth 1 https://github.com/klzgrad/forwardproxy.git forwardproxy
+          cd forwardproxy
           echo "Commit: $(git rev-parse HEAD)"
 
-      - name: 确保 `go.sum` 存在
+      - name: 运行 `go mod tidy` 确保 `go.sum` 存在
         run: |
-          cd $GITHUB_WORKSPACE/forwardproxy
+          cd forwardproxy
           go mod tidy
           if [ ! -f go.sum ]; then
-            echo "go.sum not found! Creating an empty one."
+            echo "⚠️ go.sum not found! Creating an empty one."
             touch go.sum
           fi
+          ls -lh go.sum  # 确保 go.sum 存在
+          cat go.sum | head -n 10  # 打印前 10 行内容
 
-      - name: 复制 `go.sum` 到工作目录（防止 GitHub Actions 缓存错误）
-        run: cp $GITHUB_WORKSPACE/forwardproxy/go.sum $GITHUB_WORKSPACE/go.sum
-
-      - name: 安装 xcaddy
+      - name: 安装 xcaddy（减少重复下载）
         run: |
-          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-          echo "$HOME/go/bin" >> $GITHUB_PATH
+          if ! command -v xcaddy &> /dev/null; then
+            go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+            echo "$HOME/go/bin" >> $GITHUB_PATH
+          fi
 
       - name: 编译 Caddy (${{ matrix.arch }})
         run: |
@@ -85,8 +86,8 @@ jobs:
             --with github.com/WeidiDeng/caddy-cloudflare-ip \
             --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
             --with github.com/mholt/caddy-webdav \
-            --with github.com/caddyserver/forwardproxy@master=$GITHUB_WORKSPACE/forwardproxy \
-            --with github.com/imgk/caddy-trojan
+            --with github.com/caddyserver/forwardproxy@master=./forwardproxy \
+            --with github.com/imgk/caddy-trojan || { echo "❌ 编译失败！"; exit 1; }
 
       - name: 上传编译结果 (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
@@ -106,18 +107,22 @@ jobs:
       - name: 生成 Release 版本号
         id: version
         run: |
-          NEW_TAG="naive-$(date +%Y%m%d-%H%M%S)"
-          echo "New tag: $NEW_TAG"
-          echo "release_tag=$NEW_TAG" >> $GITHUB_ENV
+          if [[ -n "${{ github.event.inputs.custom_tag }}" ]]; then
+            RELEASE_TAG="${{ github.event.inputs.custom_tag }}"
+          else
+            RELEASE_TAG="naive-$(date +%Y%m%d-%H%M%S)"
+          fi
+          echo "New tag: $RELEASE_TAG"
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_ENV
 
       - name: 创建 Release 并上传二进制文件
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.release_tag }}
-          name: "NaiveProxy Caddy Release - ${{ env.release_tag }}"
+          name: "NaiveProxy Caddy v${{ env.release_tag }}"
           body: |
-            自动构建的 Caddy 版本，包含 forwardproxy 和多个插件。
-            Commit: ${{ needs.check-updates.outputs.new_commit }}
+            🚀 **自动构建的 Caddy 版本**，包含 forwardproxy 和多个插件。
+            🔍 **Commit:** ${{ needs.check-updates.outputs.new_commit }}
           files: |
             artifacts/caddy_amd64/caddy_amd64
             artifacts/caddy_arm64/caddy_arm64
