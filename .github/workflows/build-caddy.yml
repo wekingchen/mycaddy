@@ -1,9 +1,10 @@
 name: Check and Build Caddy with naive forwardproxy
 
-# 触发条件：每日运行
+# 触发条件：每日运行或手动触发
 on:
   schedule:
     - cron: '0 0 * * *'  # 每天 UTC 时间 00:00（北京时间 08:00）
+  workflow_dispatch:     # 手动触发
 
 jobs:
   check-and-build:
@@ -44,15 +45,15 @@ jobs:
           fi
           echo "Last known SHA: $LAST_SHA"
           echo "Current SHA: ${{ steps.get-sha.outputs.sha }}"
-          if [ "$LAST_SHA" != "${{ steps.get-sha.outputs.sha }}" ]; then
-            echo "Update detected, proceeding with build."
+          if [ "$LAST_SHA" != "${{ steps.get-sha.outputs.sha }}" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "Update detected or manually triggered, proceeding with build."
             echo "needs_build=true" >> $GITHUB_OUTPUT
           else
             echo "No update detected, skipping build."
             echo "needs_build=false" >> $GITHUB_OUTPUT
           fi
 
-      # 如果有更新，执行编译
+      # 如果有更新或手动触发，执行编译
       - name: Build Caddy for ${{ matrix.arch }}
         if: steps.check-update.outputs.needs_build == 'true'
         env:
@@ -124,6 +125,7 @@ jobs:
           tag_name: naive-${{ needs.check-and-build.outputs.sha }}
           body: |
             Built with naive forwardproxy commit: ${{ needs.check-and-build.outputs.sha }}
+            Triggered by: ${{ github.event_name }}
           draft: false
           prerelease: false
         env:
