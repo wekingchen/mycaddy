@@ -17,13 +17,11 @@ jobs:
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
           echo "Latest commit: $LATEST_COMMIT"
 
-          # 读取上次构建的 commit
           PREVIOUS_COMMIT=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body' | grep 'Commit:' | awk '{print $2}')
 
           echo "Previous commit: $PREVIOUS_COMMIT"
 
-          # 判断是否有新提交
           if [[ "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
             echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
             echo "::set-output name=new_commit::$LATEST_COMMIT"
@@ -39,13 +37,15 @@ jobs:
       matrix:
         arch: [amd64, arm64]
     steps:
-      - name: 检查系统环境
-        run: uname -a
-
       - name: 安装最新稳定版 Go
         uses: actions/setup-go@v4
         with:
           go-version: 'stable'
+
+      - name: 设置 Go 环境变量
+        run: |
+          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
+          echo "PATH=$GOPATH/bin:$PATH" >> $GITHUB_ENV
 
       - name: 下载 xcaddy
         run: |
@@ -54,8 +54,8 @@ jobs:
 
       - name: 克隆 forwardproxy 源码
         run: |
-          git clone --branch naive --depth 1 https://github.com/klzgrad/forwardproxy.git
-          cd forwardproxy
+          git clone --branch naive --depth 1 https://github.com/klzgrad/forwardproxy.git $GITHUB_WORKSPACE/forwardproxy
+          cd $GITHUB_WORKSPACE/forwardproxy
           echo "Commit: $(git rev-parse HEAD)"
 
       - name: 编译 Caddy (${{ matrix.arch }})
@@ -72,7 +72,7 @@ jobs:
             --with github.com/WeidiDeng/caddy-cloudflare-ip \
             --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
             --with github.com/mholt/caddy-webdav \
-            --with github.com/caddyserver/forwardproxy@master=$PWD \
+            --with github.com/caddyserver/forwardproxy@master=$GITHUB_WORKSPACE/forwardproxy \
             --with github.com/imgk/caddy-trojan
 
       - name: 上传构建产物 (${{ matrix.arch }})
