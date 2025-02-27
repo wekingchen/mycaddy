@@ -50,7 +50,7 @@ jobs:
             echo "needs_build=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build Caddy for ${{ matrix.arch }}
+      - name: Setup Go environment
         if: steps.check-update.outputs.needs_build == 'true'
         env:
           GOARCH: ${{ matrix.arch }}
@@ -67,12 +67,25 @@ jobs:
           export GOPATH=/home/runner/go
           export PATH=$GOPATH/bin:$PATH
           go version
+          echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+          echo "PATH=$PATH" >> $GITHUB_ENV
 
-          # 安装 xcaddy
+      - name: Install xcaddy
+        if: steps.check-update.outputs.needs_build == 'true'
+        run: |
+          set -x  # 启用调试模式，显示命令
           echo "Installing xcaddy..."
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest || { echo "Failed to install xcaddy"; exit 1; }
-          which xcaddy  # 调试：确认 xcaddy 位置
+          ls -lh $GOPATH/bin/xcaddy || { echo "xcaddy binary not found in $GOPATH/bin"; exit 1; }
+          which xcaddy
 
+      - name: Build Caddy for ${{ matrix.arch }}
+        if: steps.check-update.outputs.needs_build == 'true'
+        env:
+          GOARCH: ${{ matrix.arch }}
+          GOOS: linux
+        run: |
+          set -x  # 启用调试模式
           # 设置 Go 代理
           go env -w GOPROXY=https://goproxy.cn,direct
 
