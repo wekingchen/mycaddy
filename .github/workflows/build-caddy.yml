@@ -63,17 +63,17 @@ jobs:
             touch go.sum
           fi
 
-      - name: **清除旧的缓存目录**（防止 `File exists` 错误）
+      - name: 清除旧的缓存目录（防止 File exists 错误）
         run: |
           rm -rf ~/go/pkg/mod ~/.cache/go-build
 
-      - name: **缓存 Go 依赖**（防止 `409 Conflict`）
+      - name: 缓存 Go 依赖（防止 409 Conflict）
         uses: actions/cache@v4
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ matrix.arch }}-${{ GITHUB_RUN_ID }}-${{ hashFiles('forwardproxy/go.sum') }}
+          key: ${{ runner.os }}-go-${{ matrix.arch }}-${{ github.run_id }}-${{ hashFiles('forwardproxy/go.sum') }}
 
       - name: 安装 xcaddy
         run: |
