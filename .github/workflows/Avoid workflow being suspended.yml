@@ -9,14 +9,14 @@ jobs:
   auto_renew:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 确保有写入权限
+      contents: write
 
     steps:
       - name: 'Checkout codes'
-        uses: actions/checkout@v4  # 升级到最新版
+        uses: actions/checkout@v4
 
       - name: 'Generate UUID'
-        run: echo $(uuidgen) > UUID.txt  # 改用跨平台命令
+        run: echo $(uuidgen) > UUID.txt
 
       - name: 'Commit Files'
         id: commit
@@ -32,8 +32,8 @@ jobs:
           fi
 
       - name: 'GitHub Push'
-        if: steps.commit.outputs.status == 'success'  # 仅在提交成功时推送
+        if: steps.commit.outputs.status == 'success'
         uses: ad-m/github-push-action@v0.6.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: main  # 明确指定分支
+          branch: main
