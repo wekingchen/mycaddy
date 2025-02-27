@@ -58,14 +58,22 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/forwardproxy
           go mod tidy
+          if [ ! -f go.sum ]; then
+            echo "go.sum not found! Creating an empty one."
+            touch go.sum
+          fi
 
-      - name: 缓存 Go 依赖（加速构建）
+      - name: **清除旧的缓存目录**（防止 `File exists` 错误）
+        run: |
+          rm -rf ~/go/pkg/mod ~/.cache/go-build
+
+      - name: **缓存 Go 依赖**（防止 `409 Conflict`）
         uses: actions/cache@v4
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ matrix.arch }}-${{ hashFiles('forwardproxy/go.sum') }}
+          key: ${{ runner.os }}-go-${{ matrix.arch }}-${{ GITHUB_RUN_ID }}-${{ hashFiles('forwardproxy/go.sum') }}
 
       - name: 安装 xcaddy
         run: |
