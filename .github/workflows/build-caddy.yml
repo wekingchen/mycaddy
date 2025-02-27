@@ -1,6 +1,5 @@
 name: Check and Build Caddy with naive forwardproxy
 
-# 触发条件：每日运行或手动触发
 on:
   schedule:
     - cron: '0 0 * * *'  # 每天 UTC 时间 00:00（北京时间 08:00）
@@ -17,11 +16,9 @@ jobs:
       sha: ${{ steps.get-sha.outputs.sha }}
 
     steps:
-      # 检出当前仓库
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 验证 gh CLI 是否可用
       - name: Verify GitHub CLI
         run: |
           gh --version
@@ -29,7 +26,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 获取 naive 分支的最新提交 SHA
       - name: Get latest commit SHA from klzgrad/forwardproxy naive branch
         id: get-sha
         run: |
@@ -37,7 +33,6 @@ jobs:
           echo "Latest SHA: $LATEST_SHA"
           echo "sha=$LATEST_SHA" >> $GITHUB_OUTPUT
 
-      # 检查是否需要编译（对比本地记录的 SHA）
       - name: Check if update is needed
         id: check-update
         run: |
@@ -55,7 +50,6 @@ jobs:
             echo "needs_build=false" >> $GITHUB_OUTPUT
           fi
 
-      # 如果有更新或手动触发，执行编译
       - name: Build Caddy for ${{ matrix.arch }}
         if: steps.check-update.outputs.needs_build == 'true'
         env:
@@ -69,17 +63,20 @@ jobs:
           # 设置 Go 环境
           echo "Setting up Go $LATEST_GO..."
           curl -sL "https://go.dev/dl/$LATEST_GO.linux-amd64.tar.gz" | sudo tar -C /usr/local -xz
-          export PATH=$PATH:/usr/local/go/bin
+          export PATH=/usr/local/go/bin:$PATH
+          export GOPATH=/home/runner/go
+          export PATH=$GOPATH/bin:$PATH
           go version
 
           # 安装 xcaddy
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+          which xcaddy  # 调试：确认 xcaddy 位置
 
           # 设置 Go 代理（可选，国内环境建议启用）
           go env -w GOPROXY=https://goproxy.cn,direct
 
           # 编译 Caddy
-          ~/go/bin/xcaddy build \
+          $GOPATH/bin/xcaddy build \
             --with github.com/mholt/caddy-l4 \
             --with github.com/caddy-dns/cloudflare \
             --with github.com/caddy-dns/dnspod \
@@ -97,7 +94,6 @@ jobs:
           mkdir -p artifacts
           mv caddy-${{ matrix.arch }} artifacts/
 
-      # 上传构建产物（如果有）
       - name: Upload artifact
         if: steps.check-update.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
@@ -108,15 +104,13 @@ jobs:
   release:
     needs: check-and-build
     runs-on: ubuntu-latest
-    if: needs.check-and-build.outputs.needs_build == 'true'  # 仅在编译发生时发布
+    if: needs.check-and-build.outputs.needs_build == 'true'
     steps:
-      # 下载所有构建产物
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      # 创建 GitHub Release
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -136,7 +130,7 @@ jobs:
   update-sha:
     needs: check-and-build
     runs-on: ubuntu-latest
-    if: needs.check-and-build.outputs.needs_build == 'true'  # 仅在编译发生时更新 SHA
+    if: needs.check-and-build.outputs.needs_build == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
