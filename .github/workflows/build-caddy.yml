@@ -75,6 +75,11 @@ jobs:
           # 设置 Go 代理（可选，国内环境建议启用）
           go env -w GOPROXY=https://goproxy.cn,direct
 
+          # 克隆 forwardproxy 仓库并切换到 naive 分支
+          git clone https://github.com/klzgrad/forwardproxy.git
+          cd forwardproxy
+          git checkout naive
+
           # 编译 Caddy
           $GOPATH/bin/xcaddy build \
             --with github.com/mholt/caddy-l4 \
@@ -86,11 +91,12 @@ jobs:
             --with github.com/WeidiDeng/caddy-cloudflare-ip \
             --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
             --with github.com/mholt/caddy-webdav \
-            --with github.com/caddyserver/forwardproxy@master=github.com/klzgrad/forwardproxy@naive \
+            --with ./ \
             --with github.com/imgk/caddy-trojan \
-            --output caddy-${{ matrix.arch }}
+            --output ../caddy-${{ matrix.arch }}
 
           # 保存编译结果
+          cd ..
           mkdir -p artifacts
           mv caddy-${{ matrix.arch }} artifacts/
 
