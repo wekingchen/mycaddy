@@ -21,11 +21,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 设置 GitHub CLI
-      - name: Setup GitHub CLI
-        uses: github/setup-gh-cli@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # 验证 gh CLI 是否可用
+      - name: Verify GitHub CLI
+        run: |
+          gh --version
+          echo "GITHUB_TOKEN=$GITHUB_TOKEN" >> $GITHUB_ENV
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 获取 naive 分支的最新提交 SHA
       - name: Get latest commit SHA from klzgrad/forwardproxy naive branch
