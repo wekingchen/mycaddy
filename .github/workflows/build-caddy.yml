@@ -9,7 +9,7 @@ on:
         description: '是否强制编译？'
         required: false
         default: 'false'
-        
+
 permissions:
   contents: write
 
@@ -22,52 +22,31 @@ jobs:
       - name: 获取 forwardproxy naive 分支的最新 commit
         id: check
         run: |
-          # 获取 naive 分支的最新 Commit ID
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
-          echo "Latest commit: $LATEST_COMMIT"
 
-          # **手动触发时，检查是否强制编译**
           if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
-              echo "🔄 手动触发编译..."
-              echo "new_commit=forced" >> $GITHUB_ENV
-              echo "new_commit=forced" >> $GITHUB_OUTPUT
-              exit 0
+            echo "🔄 手动触发编译..."
+            echo "new_commit=forced" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
-          # 获取上次 Release 记录的 Commit ID
           RELEASE_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body')
 
-          # 清理 Markdown 特殊字符，确保 grep 能正确匹配
-          CLEANED_BODY=$(echo "$RELEASE_BODY" | sed 's/\*\*//g' | sed 's/🔍//g')
-          echo "Cleaned Release body: $CLEANED_BODY"  # Debug 输出
+          PREVIOUS_COMMIT=$(echo "$RELEASE_BODY" | grep -Eo 'Commit:\s*([a-f0-9]{40})' | awk '{print $2}')
 
-          PREVIOUS_COMMIT=$(echo "$CLEANED_BODY" | grep -Eo 'Commit:\s*([a-f0-9]{40})' | awk '{print $2}')
-          echo "Previous commit: $PREVIOUS_COMMIT"
-
-          # **如果 `Previous commit` 为空，直接触发编译**
-          if [[ -z "$PREVIOUS_COMMIT" ]]; then
-            echo "⚠️ 上次 Release 里没有 Commit 记录，强制编译！"
-            echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
-            echo "new_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # **如果 Commit 变更，则触发编译**
-          if [[ "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
-            echo "🔄 forwardproxy 代码更新，开始编译..."
-            echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
+          if [[ -z "$PREVIOUS_COMMIT" || "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
+            echo "🔄 代码有更新，开始编译..."
             echo "new_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
           else
-            echo "✅ forwardproxy 代码无变化，跳过编译"
-            echo "new_commit=" >> $GITHUB_OUTPUT
+            echo "✅ 代码无变化，跳过编译"
             exit 0
           fi
 
-      - name: 存储 `new_commit` 供后续任务使用
+      - name: 存储 `new_commit`
         run: echo "${{ steps.check.outputs.new_commit }}" > new_commit.txt
 
-      - name: 上传 `new_commit.txt`（供 release 任务读取）
+      - name: 上传 `new_commit.txt`
         uses: actions/upload-artifact@v4
         with:
           name: new_commit
@@ -134,55 +113,30 @@ jobs:
         id: get_commit
         run: |
           NEW_COMMIT=$(cat new_commit.txt)
-          echo "原始 Commit ID: $NEW_COMMIT"
-
-          # **如果 Commit 是 "forced"，则获取 forwardproxy 最新 commit**
           if [[ "$NEW_COMMIT" == "forced" ]]; then
             NEW_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
             echo "⚠️ 手动触发编译，使用最新 commit: $NEW_COMMIT"
           fi
-
           echo "NEW_COMMIT=$NEW_COMMIT" >> $GITHUB_ENV
 
-      - name: 下载 `caddy_amd64`
+      - name: 下载二进制文件
         uses: actions/download-artifact@v4
         with:
-          name: caddy_amd64
           path: .
-
-      - name: 下载 `caddy_arm64`
-        uses: actions/download-artifact@v4
-        with:
-          name: caddy_arm64
-          path: .
-
-      - name: 调试 - 列出当前目录的所有文件
-        run: |
-          echo "📁 当前目录结构："
-          ls -R
 
       - name: 获取 Caddy 最新版本
         id: get_caddy_version
         run: |
           CADDY_VERSION=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r '.tag_name')
-          CADDY_VERSION=${CADDY_VERSION#v}
           echo "Caddy 最新版本: $CADDY_VERSION"
-          echo "CADDY_VERSION=$CADDY_VERSION" >> $GITHUB_ENV
+          echo "CADDY_VERSION=${CADDY_VERSION#v}" >> $GITHUB_ENV
 
       - name: 生成 Release 版本号
-        id: version
         run: |
-          RELEASE_TAG="v${{ env.CADDY_VERSION }}-$(date +%Y%m%d-%H%M%S)"
-          echo "New tag: $RELEASE_TAG"
-          echo "release_tag=$RELEASE_TAG" >> $GITHUB_ENV
+          echo "release_tag=v${{ env.CADDY_VERSION }}-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_ENV
 
       - name: 生成 Release 描述
-        id: release_body
         run: |
-          if [[ -z "$NEW_COMMIT" ]]; then
-            NEW_COMMIT="Unknown (检查变量传递)"
-          fi
-
           cat <<EOF > release_notes.txt
           🚀 **NaiveProxy Caddy Release - ${{ env.release_tag }}**
           
@@ -199,7 +153,7 @@ jobs:
           - ✅ caddy-webdav（WebDAV 服务器）
           - ✅ caddy-trojan（Trojan 协议支持）
 
-          🔍 **Commit:** $NEW_COMMIT
+          🔍 **Commit:** ${{ env.NEW_COMMIT }}
 
           📥 **[下载二进制文件](https://github.com/${{ github.repository }}/releases/tag/${{ env.release_tag }})**
           EOF
