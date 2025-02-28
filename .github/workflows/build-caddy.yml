@@ -87,11 +87,11 @@ jobs:
       - name: 克隆 forwardproxy
         run: |
           git clone https://github.com/klzgrad/forwardproxy.git
-          cd forwardproxy
 
       - name: 编译 Caddy (${{ matrix.arch }})
         run: |
           export GOARCH=${{ matrix.arch }}
+          FORWARDPROXY_DIR=$(pwd)/forwardproxy
           xcaddy build \
             --with github.com/mholt/caddy-l4 \
             --with github.com/caddy-dns/cloudflare \
@@ -102,7 +102,7 @@ jobs:
             --with github.com/WeidiDeng/caddy-cloudflare-ip \
             --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
             --with github.com/mholt/caddy-webdav \
-            --with github.com/caddyserver/forwardproxy@master=$PWD \
+            --with github.com/caddyserver/forwardproxy@master=$FORWARDPROXY_DIR \
             --with github.com/imgk/caddy-trojan 2>&1 | tee build_${{ matrix.arch }}.log
           mv caddy caddy_${{ matrix.arch }}
 
