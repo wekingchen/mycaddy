@@ -133,13 +133,15 @@ jobs:
         id: get_commit
         run: |
           NEW_COMMIT=$(cat new_commit.txt)
-          echo "Commit ID: $NEW_COMMIT"
-          echo "NEW_COMMIT=$NEW_COMMIT" >> $GITHUB_ENV
+          echo "原始 Commit ID: $NEW_COMMIT"
 
-      - name: 下载编译好的二进制文件
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+          # **如果 Commit 是 "forced"，则获取 forwardproxy 最新 commit**
+          if [[ "$NEW_COMMIT" == "forced" ]]; then
+            NEW_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
+            echo "⚠️ 手动触发编译，使用最新 commit: $NEW_COMMIT"
+          fi
+
+          echo "NEW_COMMIT=$NEW_COMMIT" >> $GITHUB_ENV
 
       - name: 获取 Caddy 最新版本
         id: get_caddy_version
