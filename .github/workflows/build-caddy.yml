@@ -66,33 +66,33 @@ jobs:
 
   build:
     needs: check-updates
-    if: needs.check-updates.outputs.new_commit != ''
+    if: ${{ needs.check-updates.outputs.new_commit != '' }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
         arch: [amd64, arm64]
     steps:
       - name: 设置 Go 环境
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v4
         with:
           go-version: 'stable'
 
-      - name: 安装 `xcaddy`
+      - name: 克隆 forwardproxy naive 分支
+        run: |
+          git clone --branch naive --depth 1 https://github.com/klzgrad/forwardproxy.git forwardproxy
+          cd forwardproxy
+          echo "Commit: $(git rev-parse HEAD)"
+
+      - name: 安装 xcaddy
         run: |
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-          echo 'export PATH=$HOME/go/bin:$PATH' >> ~/.bashrc
-          source ~/.bashrc
-          which xcaddy || exit 1
-
-      - name: 克隆 forwardproxy
-        run: |
-          git clone https://github.com/klzgrad/forwardproxy.git
+          echo "$HOME/go/bin" >> $GITHUB_PATH
 
       - name: 编译 Caddy (${{ matrix.arch }})
         run: |
+          export GOOS=linux
           export GOARCH=${{ matrix.arch }}
-          FORWARDPROXY_DIR=$(pwd)/forwardproxy
-          xcaddy build \
+          xcaddy build --output caddy_${{ matrix.arch }} \
             --with github.com/mholt/caddy-l4 \
             --with github.com/caddy-dns/cloudflare \
             --with github.com/caddy-dns/dnspod \
@@ -102,14 +102,13 @@ jobs:
             --with github.com/WeidiDeng/caddy-cloudflare-ip \
             --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
             --with github.com/mholt/caddy-webdav \
-            --with github.com/caddyserver/forwardproxy@master=$FORWARDPROXY_DIR \
-            --with github.com/imgk/caddy-trojan 2>&1 | tee build_${{ matrix.arch }}.log
-          mv caddy caddy_${{ matrix.arch }}
+            --with github.com/caddyserver/forwardproxy@master=./forwardproxy \
+            --with github.com/imgk/caddy-trojan
 
-      - name: 上传二进制文件 (${{ matrix.arch }})
+      - name: 上传编译结果 (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
         with:
-          name: caddy-${{ matrix.arch }}
+          name: caddy_${{ matrix.arch }}
           path: caddy_${{ matrix.arch }}
 
   release:
@@ -131,13 +130,6 @@ jobs:
       - name: 下载编译好的二进制文件
         uses: actions/download-artifact@v4
         with:
-          name: caddy-amd64
-          path: artifacts
-
-      - name: 下载编译好的二进制文件 (arm64)
-        uses: actions/download-artifact@v4
-        with:
-          name: caddy-arm64
           path: artifacts
 
       - name: 获取 Caddy 最新版本
@@ -158,10 +150,14 @@ jobs:
       - name: 生成 Release 描述
         id: release_body
         run: |
+          if [[ -z "$NEW_COMMIT" ]]; then
+            NEW_COMMIT="Unknown (检查变量传递)"
+          fi
+
           cat <<EOF > release_notes.txt
           🚀 **NaiveProxy Caddy Release - ${{ env.release_tag }}**
           
-          📌 **包含插件列表：**
+          **📌 包含插件列表：**
           - ✅ forwardproxy（NaïveProxy 代理）
           - ✅ caddy-l4（TCP/UDP 代理）
           - ✅ caddy-dns/cloudflare（Cloudflare DNS 解析）
@@ -181,12 +177,12 @@ jobs:
 
       - name: 创建 Release 并上传二进制文件
         uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 确保使用默认 Token
         with:
           tag_name: ${{ env.release_tag }}
           name: "NaiveProxy Caddy ${{ env.release_tag }}"
           body_path: release_notes.txt
           files: |
-            artifacts/caddy_amd64
-            artifacts/caddy_arm64
+            artifacts/caddy_amd64/caddy_amd64
+            artifacts/caddy_arm64/caddy_arm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
