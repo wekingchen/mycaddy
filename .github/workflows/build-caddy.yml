@@ -69,28 +69,26 @@ jobs:
     if: needs.check-updates.outputs.new_commit != ''
     runs-on: ubuntu-latest
     steps:
-      - name: 设置 Go Modules 缓存
-        uses: actions/cache@v3
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-mod-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            go-mod-${{ runner.os }}-
+          go-version: '1.22'  # 确保使用 Go 1.22 版本
+          check-latest: true
 
-      - name: 安装 Go 和 `xcaddy`
+      - name: 安装 `xcaddy`
         run: |
-          sudo apt update && sudo apt install -y golang
+          echo "🔹 安装 xcaddy..."
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
           echo 'export PATH=$HOME/go/bin:$PATH' >> ~/.bashrc
+          echo 'export GOPATH=$HOME/go' >> ~/.bashrc
           source ~/.bashrc
-          which xcaddy || exit 1  # 确保 xcaddy 正确安装
+          echo "🔍 验证 xcaddy 版本:"
+          which xcaddy || { echo "❌ xcaddy 安装失败！"; exit 1; }
+          xcaddy version || { echo "❌ xcaddy 无法运行！"; exit 1; }
 
       - name: 克隆 forwardproxy
         run: |
           git clone https://github.com/klzgrad/forwardproxy.git
-          cd forwardproxy
 
       - name: 编译 Caddy (amd64)
         run: |
