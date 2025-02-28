@@ -170,7 +170,7 @@ jobs:
           📥 **[下载二进制文件](https://github.com/${{ github.repository }}/releases/tag/${{ env.release_tag }})**
           EOF
 
-      - name: **创建 Release 并上传二进制文件**
+      - name: 创建 Release 并上传二进制文件
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.release_tag }}
