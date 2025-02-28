@@ -119,10 +119,22 @@ jobs:
           fi
           echo "NEW_COMMIT=$NEW_COMMIT" >> $GITHUB_ENV
 
-      - name: 下载二进制文件
+      - name: 下载 `caddy_amd64`
         uses: actions/download-artifact@v4
         with:
+          name: caddy_amd64
           path: .
+
+      - name: 下载 `caddy_arm64`
+        uses: actions/download-artifact@v4
+        with:
+          name: caddy_arm64
+          path: .
+
+      - name: **调试 - 确保二进制文件存在**
+        run: |
+          echo "📁 Release 目录结构："
+          ls -lh caddy_*
 
       - name: 获取 Caddy 最新版本
         id: get_caddy_version
@@ -158,14 +170,14 @@ jobs:
           📥 **[下载二进制文件](https://github.com/${{ github.repository }}/releases/tag/${{ env.release_tag }})**
           EOF
 
-      - name: 创建 Release 并上传二进制文件
+      - name: **创建 Release 并上传二进制文件**
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.release_tag }}
           name: "NaiveProxy Caddy ${{ env.release_tag }}"
           body_path: release_notes.txt
           files: |
-            caddy_amd64
-            caddy_arm64
+            ./caddy_amd64
+            ./caddy_arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
