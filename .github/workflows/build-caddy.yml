@@ -105,9 +105,18 @@ jobs:
           echo "New tag: $RELEASE_TAG"
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_ENV
 
+      - name: 确保 new_commit 正确传递
+        run: |
+          echo "新 Commit ID: ${{ needs.check-updates.outputs.new_commit }}"
+
       - name: 生成 Release 描述
         id: release_body
         run: |
+          NEW_COMMIT=${{ needs.check-updates.outputs.new_commit }}
+          if [[ -z "$NEW_COMMIT" ]]; then
+            NEW_COMMIT="Unknown (检查变量传递)"
+          fi
+
           cat <<EOF > release_notes.txt
           🚀 **NaiveProxy Caddy Release - ${{ env.release_tag }}**
           
@@ -124,7 +133,7 @@ jobs:
           - ✅ caddy-webdav（WebDAV 服务器）
           - ✅ caddy-trojan（Trojan 协议支持）
 
-          **🔍 Commit:** ${{ needs.check-updates.outputs.new_commit }}
+          🔍 **Commit:** $NEW_COMMIT
 
           📥 **[下载二进制文件](https://github.com/${{ github.repository }}/releases/tag/${{ env.release_tag }})**
           EOF
