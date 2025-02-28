@@ -143,6 +143,18 @@ jobs:
 
           echo "NEW_COMMIT=$NEW_COMMIT" >> $GITHUB_ENV
 
+      - name: 下载 `caddy_amd64`
+        uses: actions/download-artifact@v4
+        with:
+          name: caddy_amd64
+          path: .
+
+      - name: 下载 `caddy_arm64`
+        uses: actions/download-artifact@v4
+        with:
+          name: caddy_arm64
+          path: .
+
       - name: 获取 Caddy 最新版本
         id: get_caddy_version
         run: |
@@ -193,7 +205,7 @@ jobs:
           name: "NaiveProxy Caddy ${{ env.release_tag }}"
           body_path: release_notes.txt
           files: |
-            artifacts/caddy_amd64/caddy_amd64
-            artifacts/caddy_arm64/caddy_arm64
+            caddy_amd64/caddy_amd64
+            caddy_arm64/caddy_arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
