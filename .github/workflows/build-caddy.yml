@@ -181,8 +181,9 @@ jobs:
 
       - name: 创建 Release 并上传二进制文件
         uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 确保使用默认 Token
         with:
-          token: ${{ secrets.PAT }}  # ⚠️ 使用 Personal Access Token（PAT），确保有权限
           tag_name: ${{ env.release_tag }}
           name: "NaiveProxy Caddy ${{ env.release_tag }}"
           body_path: release_notes.txt
