@@ -183,26 +183,24 @@ jobs:
             NEW_COMMIT="Unknown (检查变量传递)"
           fi
 
-          cat <<EOF > release_notes.txt
-          🚀 **NaiveProxy Caddy Release - ${{ env.release_tag }}**
-          
-          **📌 包含插件列表：**
-          - ✅ forwardproxy（NaïveProxy 代理）
-          - ✅ caddy-l4（TCP/UDP 代理）
-          - ✅ caddy-dns/cloudflare（Cloudflare DNS 解析）
-          - ✅ caddy-dns/dnspod（DNSPod 解析）
-          - ✅ caddy-dns/duckdns（DuckDNS 解析）
-          - ✅ caddy-dynamicdns（动态 DNS 更新）
-          - ✅ caddy-events-exec（事件触发自动化）
-          - ✅ caddy-cloudflare-ip（Cloudflare IP 解析）
-          - ✅ caddy-trusted-cloudfront（CloudFront 可信代理）
-          - ✅ caddy-webdav（WebDAV 服务器）
-          - ✅ caddy-trojan（Trojan 协议支持）
-
-          🔍 **Commit:** $NEW_COMMIT
-
-          📥 **[下载二进制文件](https://github.com/${{ github.repository }}/releases/tag/${{ env.release_tag }})**
-          EOF
+          echo "🚀 **NaiveProxy Caddy Release - ${{ env.release_tag }}**" > release_notes.txt
+          echo "" >> release_notes.txt
+          echo "**📌 包含插件列表：**" >> release_notes.txt
+          echo "- ✅ forwardproxy（NaïveProxy 代理）" >> release_notes.txt
+          echo "- ✅ caddy-l4（TCP/UDP 代理）" >> release_notes.txt
+          echo "- ✅ caddy-dns/cloudflare（Cloudflare DNS 解析）" >> release_notes.txt
+          echo "- ✅ caddy-dns/dnspod（DNSPod 解析）" >> release_notes.txt
+          echo "- ✅ caddy-dns/duckdns（DuckDNS 解析）" >> release_notes.txt
+          echo "- ✅ caddy-dynamicdns（动态 DNS 更新）" >> release_notes.txt
+          echo "- ✅ caddy-events-exec（事件触发自动化）" >> release_notes.txt
+          echo "- ✅ caddy-cloudflare-ip（Cloudflare IP 解析）" >> release_notes.txt
+          echo "- ✅ caddy-trusted-cloudfront（CloudFront 可信代理）" >> release_notes.txt
+          echo "- ✅ caddy-webdav（WebDAV 服务器）" >> release_notes.txt
+          echo "- ✅ caddy-trojan（Trojan 协议支持）" >> release_notes.txt
+          echo "" >> release_notes.txt
+          echo "🔍 **Commit:** $NEW_COMMIT" >> release_notes.txt
+          echo "" >> release_notes.txt
+          echo "📥 **[下载二进制文件](https://github.com/${{ github.repository }}/releases/tag/${{ env.release_tag }})**" >> release_notes.txt
 
       - name: 创建 Release 并上传二进制文件
         uses: softprops/action-gh-release@v2
