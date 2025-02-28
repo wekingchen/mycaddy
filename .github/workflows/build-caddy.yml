@@ -79,11 +79,13 @@ jobs:
           restore-keys: |
             go-mod-${{ runner.os }}-
 
-      - name: 安装 xcaddy
+      - name: 安装 Go 和 `xcaddy`
         run: |
+          sudo apt update && sudo apt install -y golang
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
           echo 'export PATH=$HOME/go/bin:$PATH' >> ~/.bashrc
           source ~/.bashrc
+          which xcaddy || exit 1  # 确保 xcaddy 正确安装
 
       - name: 克隆 forwardproxy
         run: |
@@ -92,13 +94,37 @@ jobs:
 
       - name: 编译 Caddy (amd64)
         run: |
-          xcaddy build --with github.com/caddyserver/forwardproxy@master=$PWD 2>&1 | tee build_amd64.log
-          mv caddy caddy_amd64
+          cd forwardproxy
+          xcaddy build \
+            --with github.com/mholt/caddy-l4 \
+            --with github.com/caddy-dns/cloudflare \
+            --with github.com/caddy-dns/dnspod \
+            --with github.com/caddy-dns/duckdns \
+            --with github.com/mholt/caddy-dynamicdns \
+            --with github.com/mholt/caddy-events-exec \
+            --with github.com/WeidiDeng/caddy-cloudflare-ip \
+            --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
+            --with github.com/mholt/caddy-webdav \
+            --with github.com/caddyserver/forwardproxy@master=$PWD \
+            --with github.com/imgk/caddy-trojan 2>&1 | tee build_amd64.log
+          mv caddy ../caddy_amd64
 
       - name: 编译 Caddy (arm64)
         run: |
-          GOARCH=arm64 xcaddy build --with github.com/caddyserver/forwardproxy@master=$PWD 2>&1 | tee build_arm64.log
-          mv caddy caddy_arm64
+          cd forwardproxy
+          GOARCH=arm64 xcaddy build \
+            --with github.com/mholt/caddy-l4 \
+            --with github.com/caddy-dns/cloudflare \
+            --with github.com/caddy-dns/dnspod \
+            --with github.com/caddy-dns/duckdns \
+            --with github.com/mholt/caddy-dynamicdns \
+            --with github.com/mholt/caddy-events-exec \
+            --with github.com/WeidiDeng/caddy-cloudflare-ip \
+            --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
+            --with github.com/mholt/caddy-webdav \
+            --with github.com/caddyserver/forwardproxy@master=$PWD \
+            --with github.com/imgk/caddy-trojan 2>&1 | tee build_arm64.log
+          mv caddy ../caddy_arm64
 
       - name: 上传二进制文件
         uses: actions/upload-artifact@v4
