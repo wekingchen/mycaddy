@@ -4,7 +4,12 @@ on:
   schedule:
     - cron: '0 0 * * *'  # 每天 UTC 00:00 运行
   workflow_dispatch:
-
+    inputs:
+      force_build:
+        description: '是否强制编译？'
+        required: false
+        default: 'false'
+        
 permissions:
   contents: write
 
@@ -20,6 +25,14 @@ jobs:
           # 获取 naive 分支的最新 Commit ID
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
           echo "Latest commit: $LATEST_COMMIT"
+
+          # **手动触发时，检查是否强制编译**
+          if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
+              echo "🔄 手动触发编译..."
+              echo "new_commit=forced" >> $GITHUB_ENV
+              echo "new_commit=forced" >> $GITHUB_OUTPUT
+              exit 0
+          fi
 
           # 获取上次 Release 记录的 Commit ID
           RELEASE_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
