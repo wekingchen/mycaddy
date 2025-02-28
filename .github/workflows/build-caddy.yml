@@ -32,15 +32,17 @@ jobs:
           PREVIOUS_COMMIT=$(echo "$CLEANED_BODY" | grep -Eo 'Commit:\s*([a-f0-9]{40})' | awk '{print $2}')
           echo "Previous commit: $PREVIOUS_COMMIT"
 
-          # Debug：如果仍然为空，输出完整 Release 内容
+          # **如果 `Previous commit` 为空，直接触发编译**
           if [[ -z "$PREVIOUS_COMMIT" ]]; then
-            echo "⚠️ 未能解析到 Previous commit，完整 Release body 如下："
-            echo "$CLEANED_BODY"
-            exit 1  # 先强制退出，检查 Release 数据
+            echo "⚠️ 上次 Release 里没有 Commit 记录，强制编译！"
+            echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
+            echo "new_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
-          # 只有当 Commit ID 变化时，才进行编译
+          # **如果 Commit 变更，则触发编译**
           if [[ "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
+            echo "🔄 forwardproxy 代码更新，开始编译..."
             echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
             echo "new_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
           else
