@@ -21,17 +21,20 @@ jobs:
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
           echo "Latest commit: $LATEST_COMMIT"
 
-          # 获取上次 Release 里记录的 Commit ID
-          PREVIOUS_COMMIT=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body' | grep -Eo 'Commit:\s*([a-f0-9]{40})' | awk '{print $2}')
+          # 获取上次 Release 记录的 Commit ID
+          RELEASE_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body')
 
+          echo "Release body: $RELEASE_BODY"  # Debug 输出完整 body
+
+          PREVIOUS_COMMIT=$(echo "$RELEASE_BODY" | grep -Eo 'Commit:\s*([a-f0-9]{40})' | awk '{print $2}')
           echo "Previous commit: $PREVIOUS_COMMIT"
 
-          # 如果 PREVIOUS_COMMIT 为空，说明 Release 里可能没有 Commit 记录，跳过编译
+          # Debug：如果仍然为空，输出完整 Release 内容
           if [[ -z "$PREVIOUS_COMMIT" ]]; then
-            echo "⚠️ 上次 Release 没有 Commit 记录，跳过编译"
-            echo "new_commit=" >> $GITHUB_OUTPUT
-            exit 0
+            echo "⚠️ 未能解析到 Previous commit，完整 Release body 如下："
+            echo "$RELEASE_BODY"
+            exit 1  # 先强制退出，检查 Release 数据
           fi
 
           # 只有当 Commit ID 变化时，才进行编译
