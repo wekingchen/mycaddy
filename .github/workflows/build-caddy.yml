@@ -131,7 +131,7 @@ jobs:
           name: caddy_arm64
           path: .
 
-      - name: 调试 - 确保二进制文件存在
+      - name: 确保二进制文件存在
         run: |
           echo "📁 Release 目录结构："
           ls -lh caddy_*
