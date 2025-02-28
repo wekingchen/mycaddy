@@ -1,14 +1,12 @@
-name: Build & Release NaïveProxy Caddy
+name: Build and Release Caddy with Forwardproxy
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天 00:00 自动运行
+    - cron: '0 0 * * *'  # 每天 UTC 00:00 运行
   workflow_dispatch:
-    inputs:
-      force_build:
-        description: '是否强制编译？'
-        required: false
-        default: 'false'
+
+permissions:
+  contents: write
 
 jobs:
   check-updates:
@@ -19,25 +17,22 @@ jobs:
       - name: 获取 forwardproxy naive 分支的最新 commit
         id: check
         run: |
+          # 获取 naive 分支的最新 Commit ID
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
           echo "Latest commit: $LATEST_COMMIT"
 
+          # 获取上次 Release 记录的 Commit ID
           RELEASE_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body')
 
+          # 清理 Markdown 特殊字符，确保 grep 能正确匹配
           CLEANED_BODY=$(echo "$RELEASE_BODY" | sed 's/\*\*//g' | sed 's/🔍//g')
-          echo "Cleaned Release body: $CLEANED_BODY"
+          echo "Cleaned Release body: $CLEANED_BODY"  # Debug 输出
 
           PREVIOUS_COMMIT=$(echo "$CLEANED_BODY" | grep -Eo 'Commit:\s*([a-f0-9]{40})' | awk '{print $2}')
           echo "Previous commit: $PREVIOUS_COMMIT"
 
-          if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
-              echo "🔄 手动触发编译..."
-              echo "new_commit=forced" >> $GITHUB_ENV
-              echo "new_commit=forced" >> $GITHUB_OUTPUT
-              exit 0
-          fi
-
+          # **如果 `Previous commit` 为空，直接触发编译**
           if [[ -z "$PREVIOUS_COMMIT" ]]; then
             echo "⚠️ 上次 Release 里没有 Commit 记录，强制编译！"
             echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
@@ -45,6 +40,7 @@ jobs:
             exit 0
           fi
 
+          # **如果 Commit 变更，则触发编译**
           if [[ "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
             echo "🔄 forwardproxy 代码更新，开始编译..."
             echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
@@ -58,7 +54,7 @@ jobs:
       - name: 存储 `new_commit` 供后续任务使用
         run: echo "${{ steps.check.outputs.new_commit }}" > new_commit.txt
 
-      - name: 上传 `new_commit.txt`
+      - name: 上传 `new_commit.txt`（供 release 任务读取）
         uses: actions/upload-artifact@v4
         with:
           name: new_commit
