@@ -9,7 +9,7 @@ on:
         description: '是否强制编译？'
         required: false
         default: 'false'
-        
+
 permissions:
   contents: write
 
@@ -22,11 +22,9 @@ jobs:
       - name: 获取 forwardproxy naive 分支的最新 commit
         id: check
         run: |
-          # 获取 naive 分支的最新 Commit ID
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
           echo "Latest commit: $LATEST_COMMIT"
 
-          # **手动触发时，检查是否强制编译**
           if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
               echo "🔄 手动触发编译..."
               echo "new_commit=forced" >> $GITHUB_ENV
@@ -34,18 +32,10 @@ jobs:
               exit 0
           fi
 
-          # 获取上次 Release 记录的 Commit ID
-          RELEASE_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body')
-
-          # 清理 Markdown 特殊字符，确保 grep 能正确匹配
+          RELEASE_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body')
           CLEANED_BODY=$(echo "$RELEASE_BODY" | sed 's/\*\*//g' | sed 's/🔍//g')
-          echo "Cleaned Release body: $CLEANED_BODY"  # Debug 输出
-
           PREVIOUS_COMMIT=$(echo "$CLEANED_BODY" | grep -Eo 'Commit:\s*([a-f0-9]{40})' | awk '{print $2}')
-          echo "Previous commit: $PREVIOUS_COMMIT"
 
-          # **如果 `Previous commit` 为空，直接触发编译**
           if [[ -z "$PREVIOUS_COMMIT" ]]; then
             echo "⚠️ 上次 Release 里没有 Commit 记录，强制编译！"
             echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
@@ -53,7 +43,6 @@ jobs:
             exit 0
           fi
 
-          # **如果 Commit 变更，则触发编译**
           if [[ "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
             echo "🔄 forwardproxy 代码更新，开始编译..."
             echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
@@ -81,6 +70,9 @@ jobs:
       matrix:
         arch: [amd64, arm64]
     steps:
+      - name: Checkout workflow
+        uses: actions/checkout@v4
+
       - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
@@ -101,19 +93,20 @@ jobs:
         run: |
           export GOOS=linux
           export GOARCH=${{ matrix.arch }}
-          xcaddy build --output caddy_${{ matrix.arch }} \
-          --with github.com/libdns/libdns@v0.2.3 \
-          --with github.com/caddyserver/caddy/v2 \
-          --with github.com/caddy-dns/cloudflare \
-          --with github.com/caddy-dns/tencentcloud \
-          --with github.com/caddy-dns/duckdns \
-          --with github.com/mholt/caddy-dynamicdns \
-          --with github.com/mholt/caddy-events-exec \
-          --with github.com/WeidiDeng/caddy-cloudflare-ip \
-          --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
-          --with github.com/mholt/caddy-webdav \
-          --with github.com/caddyserver/forwardproxy@master=./forwardproxy \
-          --with github.com/imgk/caddy-trojan
+          ~/go/bin/xcaddy build --output caddy_${{ matrix.arch }} \
+            --caddyversion v2.9.1 \
+            --with github.com/libdns/libdns@v0.2.3 \
+            --with github.com/mholt/caddy-l4 \
+            --with github.com/caddy-dns/cloudflare \
+            --with github.com/caddy-dns/tencentcloud \
+            --with github.com/caddy-dns/duckdns \
+            --with github.com/mholt/caddy-dynamicdns \
+            --with github.com/mholt/caddy-events-exec \
+            --with github.com/WeidiDeng/caddy-cloudflare-ip \
+            --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
+            --with github.com/mholt/caddy-webdav \
+            --with github.com/caddyserver/forwardproxy@master=./forwardproxy \
+            --with github.com/imgk/caddy-trojan
 
       - name: 上传编译结果 (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
@@ -135,14 +128,9 @@ jobs:
         id: get_commit
         run: |
           NEW_COMMIT=$(cat new_commit.txt)
-          echo "原始 Commit ID: $NEW_COMMIT"
-
-          # **如果 Commit 是 "forced"，则获取 forwardproxy 最新 commit**
           if [[ "$NEW_COMMIT" == "forced" ]]; then
             NEW_COMMIT=$(curl -s https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')
-            echo "⚠️ 手动触发编译，使用最新 commit: $NEW_COMMIT"
           fi
-
           echo "NEW_COMMIT=$NEW_COMMIT" >> $GITHUB_ENV
 
       - name: 下载 `caddy_amd64`
@@ -158,32 +146,24 @@ jobs:
           path: .
 
       - name: 列出当前目录的所有文件
-        run: |
-          echo "📁 当前目录结构："
-          ls -R
+        run: ls -R
 
       - name: 获取 Caddy 最新版本
         id: get_caddy_version
         run: |
           CADDY_VERSION=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r '.tag_name')
           CADDY_VERSION=${CADDY_VERSION#v}
-          echo "Caddy 最新版本: $CADDY_VERSION"
           echo "CADDY_VERSION=$CADDY_VERSION" >> $GITHUB_ENV
 
       - name: 生成 Release 版本号
         id: version
         run: |
           RELEASE_TAG="v${{ env.CADDY_VERSION }}-$(date +%Y%m%d-%H%M%S)"
-          echo "New tag: $RELEASE_TAG"
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_ENV
 
       - name: 生成 Release 描述
         id: release_body
         run: |
-          if [[ -z "$NEW_COMMIT" ]]; then
-            NEW_COMMIT="Unknown (检查变量传递)"
-          fi
-
           cat <<EOF > release_notes.txt
           🚀 **NaiveProxy Caddy Release - ${{ env.release_tag }}**
           
@@ -191,7 +171,7 @@ jobs:
           - ✅ forwardproxy（NaïveProxy 代理）
           - ✅ caddy-l4（TCP/UDP 代理）
           - ✅ caddy-dns/cloudflare（Cloudflare DNS 解析）
-          - ✅ caddy-dns/dnspod（DNSPod 解析）
+          - ✅ caddy-dns/tencentcloud（DNSPod 解析）
           - ✅ caddy-dns/duckdns（DuckDNS 解析）
           - ✅ caddy-dynamicdns（动态 DNS 更新）
           - ✅ caddy-events-exec（事件触发自动化）
