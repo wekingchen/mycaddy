@@ -102,18 +102,18 @@ jobs:
           export GOOS=linux
           export GOARCH=${{ matrix.arch }}
           xcaddy build --output caddy_${{ matrix.arch }} \
-            --with github.com/libdns/libdns@v0.2.3 \
-            --with github.com/mholt/caddy-l4 \
-            --with github.com/caddy-dns/cloudflare \
-            --with github.com/caddy-dns/tencentcloud \
-            --with github.com/caddy-dns/duckdns \
-            --with github.com/mholt/caddy-dynamicdns \
-            --with github.com/mholt/caddy-events-exec \
-            --with github.com/WeidiDeng/caddy-cloudflare-ip \
-            --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
-            --with github.com/mholt/caddy-webdav \
-            --with github.com/caddyserver/forwardproxy@master=./forwardproxy \
-            --with github.com/imgk/caddy-trojan
+          --with github.com/libdns/libdns@v0.2.3 \
+          --with github.com/caddyserver/caddy/v2 \
+          --with github.com/caddy-dns/cloudflare \
+          --with github.com/caddy-dns/tencentcloud \
+          --with github.com/caddy-dns/duckdns \
+          --with github.com/mholt/caddy-dynamicdns \
+          --with github.com/mholt/caddy-events-exec \
+          --with github.com/WeidiDeng/caddy-cloudflare-ip \
+          --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
+          --with github.com/mholt/caddy-webdav \
+          --with github.com/caddyserver/forwardproxy@master=./forwardproxy \
+          --with github.com/imgk/caddy-trojan
 
       - name: 上传编译结果 (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
