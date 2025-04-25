@@ -82,7 +82,7 @@ jobs:
         arch: [amd64, arm64]
     steps:
       - name: 设置 Go 环境
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: 'stable'
 
@@ -104,7 +104,6 @@ jobs:
           xcaddy build --output caddy_${{ matrix.arch }} \
             --with github.com/mholt/caddy-l4 \
             --with github.com/caddy-dns/cloudflare \
-            --with github.com/caddy-dns/dnspod \
             --with github.com/caddy-dns/duckdns \
             --with github.com/mholt/caddy-dynamicdns \
             --with github.com/mholt/caddy-events-exec \
