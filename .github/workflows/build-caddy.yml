@@ -105,6 +105,7 @@ jobs:
             --with github.com/mholt/caddy-l4 \
             --with github.com/caddy-dns/cloudflare \
             --with github.com/caddy-dns/duckdns \
+            ## --with github.com/caddy-dns/tencentcloud \
             --with github.com/mholt/caddy-dynamicdns \
             --with github.com/mholt/caddy-events-exec \
             --with github.com/WeidiDeng/caddy-cloudflare-ip \
@@ -189,7 +190,7 @@ jobs:
           - ✅ forwardproxy（NaïveProxy 代理）
           - ✅ caddy-l4（TCP/UDP 代理）
           - ✅ caddy-dns/cloudflare（Cloudflare DNS 解析）
-          - ✅ caddy-dns/dnspod（DNSPod 解析）
+          - ✅ caddy-dns/tencentcloudd（DNSPod 解析）**暂时去除**
           - ✅ caddy-dns/duckdns（DuckDNS 解析）
           - ✅ caddy-dynamicdns（动态 DNS 更新）
           - ✅ caddy-events-exec（事件触发自动化）
