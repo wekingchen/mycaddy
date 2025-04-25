@@ -45,7 +45,7 @@ jobs:
           PREVIOUS_COMMIT=$(echo "$CLEANED_BODY" | grep -Eo 'Commit:\s*([a-f0-9]{40})' | awk '{print $2}')
           echo "Previous commit: $PREVIOUS_COMMIT"
 
-          # **如果 Previous commit 为空，直接触发编译**
+          # **如果 `Previous commit` 为空，直接触发编译**
           if [[ -z "$PREVIOUS_COMMIT" ]]; then
             echo "⚠️ 上次 Release 里没有 Commit 记录，强制编译！"
             echo "new_commit=$LATEST_COMMIT" >> $GITHUB_ENV
@@ -64,10 +64,10 @@ jobs:
             exit 0
           fi
 
-      - name: 存储 new_commit 供后续任务使用
+      - name: 存储 `new_commit` 供后续任务使用
         run: echo "${{ steps.check.outputs.new_commit }}" > new_commit.txt
 
-      - name: 上传 new_commit.txt（供 release 任务读取）
+      - name: 上传 `new_commit.txt`（供 release 任务读取）
         uses: actions/upload-artifact@v4
         with:
           name: new_commit
@@ -82,7 +82,7 @@ jobs:
         arch: [amd64, arm64]
     steps:
       - name: 设置 Go 环境
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v4
         with:
           go-version: 'stable'
 
@@ -104,7 +104,7 @@ jobs:
           xcaddy build --output caddy_${{ matrix.arch }} \
             --with github.com/mholt/caddy-l4 \
             --with github.com/caddy-dns/cloudflare \
-            # --with github.com/caddy-dns/tencentcloud \
+            --with github.com/caddy-dns/dnspod \
             --with github.com/caddy-dns/duckdns \
             --with github.com/mholt/caddy-dynamicdns \
             --with github.com/mholt/caddy-events-exec \
@@ -124,13 +124,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: 下载 new_commit.txt
+      - name: 下载 `new_commit.txt`
         uses: actions/download-artifact@v4
         with:
           name: new_commit
           path: .
 
-      - name: 读取 new_commit
+      - name: 读取 `new_commit`
         id: get_commit
         run: |
           NEW_COMMIT=$(cat new_commit.txt)
@@ -144,13 +144,13 @@ jobs:
 
           echo "NEW_COMMIT=$NEW_COMMIT" >> $GITHUB_ENV
 
-      - name: 下载 caddy_amd64
+      - name: 下载 `caddy_amd64`
         uses: actions/download-artifact@v4
         with:
           name: caddy_amd64
           path: .
 
-      - name: 下载 caddy_arm64
+      - name: 下载 `caddy_arm64`
         uses: actions/download-artifact@v4
         with:
           name: caddy_arm64
