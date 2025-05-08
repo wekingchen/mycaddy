@@ -1,90 +1,117 @@
 # NaiveProxy Caddy 定制编译
 
-[![GitHub Release](https://img.shields.io/github/v/release/wekingchen/mycaddy?style=flat-square&logo=github)](https://github.com/wekingchen/mycaddy/releases)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/wekingchen/mycaddy/build-caddy.yml?branch=main&style=flat-square&logo=github-actions)](https://github.com/wekingchen/mycaddy/actions)
+[![GitHub Release](https://img.shields.io/github/v/release/wekingchen/mycaddy?style=flat-square\&logo=github)](https://github.com/wekingchen/mycaddy/releases)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/wekingchen/mycaddy/build-and-release-caddy.yml?style=flat-square\&logo=github-actions)](https://github.com/wekingchen/mycaddy/actions)
 
-每日自动构建集成 **forwardproxy 及多款扩展插件的 Caddy 服务器**，支持手动触发编译与跨平台部署。
+基于 Caddy 官方镜像，集成 **forwardproxy (udpinhttp 分支)** 与多款扩展插件的定制化构建。通过 GitHub Actions 实现：
+
+* **每日自动检测更新**，仅在上游代码发生变化时触发构建
+* **双架构输出**：`amd64` 与 `arm64`
+* **自动打包**：生成 `.tar.gz` 二进制包，便于下载与分发
+* **版本格式**：`vX.Y.Z-YYYYMMDD-HHMMSS`，同时在 Release Notes 中记录对应 Commit
 
 ---
 
 ## 🌟 核心功能
 
-### 🧩 内置插件集
-| 插件名称                      | 功能描述                   |
-|-------------------------------|--------------------------|
-| `forwardproxy`                | NaïveProxy 代理支持       |
-| `caddy-l4`                    | TCP/UDP 四层代理          |
-| `caddy-dns/cloudflare`        | Cloudflare DNS 解析       |
-| `caddy-dns/dnspod`            | DNSPod 域名解析           |
-| `caddy-dynamicdns`            | 动态 DNS 更新服务         |
-| `caddy-events-exec`           | 事件触发自动化脚本         |
-| `caddy-cloudflare-ip`         | Cloudflare IP 解析优化    |
-| `caddy-trusted-cloudfront`    | CloudFront 可信代理支持   |
-| `caddy-webdav`                | WebDAV 文件服务器         |
-| `caddy-trojan`                | Trojan 协议支持           |
+| 插件名称                       | 功能描述                       |
+| -------------------------- | -------------------------- |
+| `forwardproxy`             | NaïveProxy 代理支持（udpinhttp） |
+| `jsonc-adapter`            | JSONC 配置支持（保留注释）           |
+| `caddy-l4`                 | TCP/UDP 第四层协议代理            |
+| `caddy-dns/cloudflare`     | Cloudflare DNS 解析          |
+| `caddy-dns/tencentcloud`   | 腾讯云 DNS 解析                 |
+| `caddy-dns/duckdns`        | DuckDNS 动态域名解析             |
+| `caddy-dynamicdns`         | 动态 DNS 更新                  |
+| `caddy-events-exec`        | 事件触发自动化执行脚本                |
+| `caddy-cloudflare-ip`      | Cloudflare IP 优选           |
+| `caddy-trusted-cloudfront` | CloudFront 可信代理支持          |
+| `caddy-webdav`             | WebDAV 文件服务器               |
+| `caddy-trojan`             | Trojan 协议支持                |
 
-### ⚡ 构建特性
-- **智能编译策略**
-  - 🕒 每日 UTC 时间自动同步上游更新
-  - 🔄 仅代码变更时触发构建，节省资源
-  - 🏗️ 同时生成 `amd64` / `arm64` 双架构版本
-  - 📌 版本号格式：`vX.Y.Z-YYYYMMDD-HHMMSS`
+---
 
-- **便捷部署**
-  - 📦 GitHub Release 提供预编译二进制
-  - 🖥️ 开箱即用，无需复杂配置
-  - 📥 支持 Linux 系统直接运行
+## ⚡ 构建特性
+
+* **自动同步**：每天 UTC 16:00（北京时间 00:00）检测 `imgk/forwardproxy:udpinhttp` 分支最新 Commit
+* **智能触发**：仅当检测到上游代码变动或手动勾选 `force_build=true` 时才执行构建
+* **多架构**：同时生成 `linux/amd64` 与 `linux/arm64` 可执行文件
+* **自动打包**：使用 `file` 校验架构后，压缩为 `caddy_${arch}.tar.gz`
+* **Release 发布**：
+
+  * Tag 示例：`v2.6.4-20250508-000501`
+  * Release Notes 中包含插件列表及 Commit 信息
 
 ---
 
 ## 🚀 快速开始
 
-### 下载预编译版本
-1. 访问 [Releases 页面](https://github.com/wekingchen/mycaddy/releases)
-2. 根据架构选择：
-   - `caddy_amd64`：x86_64 设备（Intel/AMD 处理器）
-   - `caddy_arm64`：ARM64 设备（树莓派/Apple Silicon）
-3. 终端操作：
+### 下载预编译包
+
+1. 打开 [Releases 页面](https://github.com/wekingchen/mycaddy/releases)
+2. 下载对应架构的压缩包：
+
+   * `caddy_amd64.tar.gz`：适用于 Intel/AMD x86\_64 设备
+   * `caddy_arm64.tar.gz`：适用于 ARM64 设备（如 Raspberry Pi / Apple Silicon）
+3. 解压并运行：
+
    ```bash
-   chmod +x caddy_*  # 添加执行权限
-   ./caddy_amd64 version  # 验证版本
+   tar -xzf caddy_amd64.tar.gz    # 解压
+   chmod +x caddy                  # 添加执行权限
+   ./caddy version                 # 验证版本
+   ```
 
-### 自定义构建
-#### GitHub Actions 编译
-1. 访问仓库的 Actions 页面
-2. 选择 `Build and Release Caddy with Forwardproxy` 工作流
-3. 点击 `Run workflow` 触发构建
-   - ✅ 强制编译：勾选 `force_build=true`
+### GitHub Actions 构建
 
-#### 本地编译指南
+1. 进入仓库的 **Actions** → 选择 **Build and Release Caddy with Forwardproxy**
+2. 点击 **Run workflow**：
+
+   * 若需强制全量编译，勾选输入框 `force_build=true`
+
+---
+
+## 🛠️ 本地编译指南
+
 ```bash
-# 获取 forwardproxy 源码
-git clone --branch naive --depth 1 \
-  https://github.com/klzgrad/forwardproxy.git
+# 克隆 forwardproxy 源码 (udpinhttp 分支)
+git clone --branch udpinhttp --depth 1 \
+  https://github.com/imgk/forwardproxy.git forwardproxy
 
-# 安装构建工具
+# 安装 xcaddy
 go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 export PATH="$HOME/go/bin:$PATH"
 
-# 执行编译命令
+# 编译 Caddy with 插件
 xcaddy build \
-  --with github.com/caddyserver/forwardproxy@master=./forwardproxy \
+  --output caddy \
+  --with github.com/caddyserver/jsonc-adapter \
   --with github.com/mholt/caddy-l4 \
   --with github.com/caddy-dns/cloudflare \
-  --with github.com/caddy-dns/dnspod \
+  --with github.com/caddy-dns/tencentcloud \
   --with github.com/caddy-dns/duckdns \
   --with github.com/mholt/caddy-dynamicdns \
   --with github.com/mholt/caddy-events-exec \
   --with github.com/WeidiDeng/caddy-cloudflare-ip \
   --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
   --with github.com/mholt/caddy-webdav \
+  --with github.com/caddyserver/forwardproxy@master=./forwardproxy \
   --with github.com/imgk/caddy-trojan
+
+# 校验架构并打包
+file caddy                # 查看架构
+tar -czf caddy.tar.gz caddy
+
+# 运行示例
+chmod +x caddy
+./caddy version
+```
 
 ---
 
-## 🛠️ 配置示例
+## 📄 配置示例
 
 ### 基础代理配置
+
 ```caddy
 :443 {
   forwardproxy {
@@ -102,10 +129,11 @@ xcaddy build \
 ```
 
 ### 完整域名配置
+
 ```caddy
 proxy.example.com {
   tls /path/to/cert.pem /path/to/key.pem
-  
+
   forwardproxy {
     hide_ip
     hide_via
@@ -125,7 +153,10 @@ proxy.example.com {
 ---
 
 ## ⚠️ 注意事项
-- 自动构建基于 UTC 时间（北京时间 08:00）
-- 使用 `GITHUB_TOKEN` 实现自动发布流程
-- 生产环境建议使用 Releases 中的稳定版本
-- 所有操作需遵守当地法律法规
+
+* 构建调度基于 UTC 16:00（北京时间 00:00）
+* Release Notes 自动记录插件列表与对应 Commit
+* 本地编译前请确保 Go 环境及 `xcaddy` 已安装
+* 如需定制更多插件，可在 `xcaddy build` 命令中增删 `--with` 参数
+
+---
