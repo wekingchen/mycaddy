@@ -26,15 +26,16 @@ jobs:
         run: |
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/imgk/forwardproxy/commits/udpinhttp | jq -r '.sha')
           echo "最新 upstream Commit: $LATEST_COMMIT"
-          if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
-            echo "🔄 手动触发：强制编译"
-            echo "new_commit=forced" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+          # … 省略强制触发逻辑 …
           RELEASE_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body')
           CLEAN_BODY=$(echo "$RELEASE_BODY" | tr -d '*' | tr -d '🔍')
-          PREVIOUS_COMMIT=$(echo "$CLEAN_BODY" | grep -Eo 'Commit[:：]\s*[0-9a-f]{40}' | awk -F'[:：]' '{print $2}' | xargs)
+          echo "Cleaned Release body: $CLEAN_BODY"
+          # 这里更新为同时匹配英文和中文标签
+          PREVIOUS_COMMIT=$(echo "$CLEAN_BODY" \
+            | grep -Eo '(Commit|提交 ID)[:：]\s*[0-9a-f]{40}' \
+            | awk -F'[:：]' '{print $2}' \
+            | xargs)
           echo "上次记录的 Commit: $PREVIOUS_COMMIT"
           if [[ -z "$PREVIOUS_COMMIT" || "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
             echo "🔄 发现 upstream 更新，触发构建"
