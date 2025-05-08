@@ -1,0 +1,49 @@
+name: '避免工作流被暂停'
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 12 * *'
+
+jobs:
+  auto_renew:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: '检出代码'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: '生成 UUID'
+        run: echo $(uuidgen) > ./UUID.txt
+
+      - name: '保存本地修改'
+        run: git stash
+
+      - name: '同步更新代码'
+        run: |
+          git pull --rebase
+          git stash pop || echo "无本地修改"
+
+      - name: '提交更新'
+        id: commit
+        run: |
+          git config user.email "me@kmou424.moe"
+          git config user.name "张三"
+          git add ./UUID.txt
+          if git diff --cached --quiet; then
+            echo "status=no_change" >> $GITHUB_OUTPUT
+          else
+            git commit -m '更新 UUID'
+            echo "status=success" >> $GITHUB_OUTPUT
+          fi
+
+      - name: '推送到 GitHub'
+        if: steps.commit.outputs.status == 'success'
+        uses: ad-m/github-push-action@v0.6.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: main
