@@ -145,26 +145,26 @@ jobs:
       - name: 生成 Release Notes
         run: |
           cat <<EOF > release_notes.md
-🚀 **NaiveProxy Caddy Release — ${{ env.TAG }}**
+          🚀 **NaiveProxy Caddy Release — ${{ env.TAG }}**
 
-**包含插件列表：**
-- forwardproxy（udpinhttp 分支）
-- jsonc-adapter
-- caddy-l4（TCP/UDP 代理）
-- caddy-dns/cloudflare
-- caddy-dns/tencentcloud
-- caddy-dns/duckdns
-- caddy-dynamicdns
-- caddy-events-exec
-- caddy-cloudflare-ip
-- caddy-trusted-cloudfront
-- caddy-webdav
-- caddy-trojan
+          **包含插件列表：**
+          - forwardproxy（udpinhttp 分支）
+          - jsonc-adapter
+          - caddy-l4（TCP/UDP 代理）
+          - caddy-dns/cloudflare
+          - caddy-dns/tencentcloud
+          - caddy-dns/duckdns
+          - caddy-dynamicdns
+          - caddy-events-exec
+          - caddy-cloudflare-ip
+          - caddy-trusted-cloudfront
+          - caddy-webdav
+          - caddy-trojan
 
-🔍 **Commit:** ${{ env.COMMIT }}
+          🔍 **Commit:** ${{ env.COMMIT }}
 
-📥 [下载二进制文件](https://github.com/${{ github.repository }}/releases/tag/${{ env.TAG }})
-EOF
+          📥 [下载二进制文件](https://github.com/${{ github.repository }}/releases/tag/${{ env.TAG }})
+          EOF
 
       - name: 发布 Release
         uses: softprops/action-gh-release@v2
