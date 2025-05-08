@@ -63,7 +63,7 @@
 
 ### GitHub Actions 构建
 
-1. 进入仓库的 **Actions** → 选择 **Build and Release Caddy with Forwardproxy**
+1. 进入仓库的 **Actions** → 选择 **构建与发布 NaiveProxy Caddy**
 2. 点击 **Run workflow**：
 
    * 若需强制全量编译，勾选输入框 `force_build=true`
