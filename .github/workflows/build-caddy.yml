@@ -21,22 +21,23 @@ jobs:
     outputs:
       new_commit: ${{ steps.check.outputs.new_commit }}
     steps:
-      - name: 获取 forwardproxy 最新 Commit
+      - name: 获取 forwardproxy 最新 Commit 并检查是否强制编译
         id: check
         run: |
+          # 调试：打印收到的输入值
+          echo "输入的 force_build = '${{ github.event.inputs.force_build }}'"
+
+          # 如果输入以 true（不区分大小写）开头，就当作强制编译
+          if [[ "${{ github.event.inputs.force_build }}" =~ ^[Tt]rue$ ]]; then
+            echo "🔄 手动触发：强制编译"
+            # 只写入 step 输出 new_commit
+            echo "new_commit=forced" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # —— 以下保持原有的上游检测逻辑 —— 
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/imgk/forwardproxy/commits/udpinhttp | jq -r '.sha')
-          echo "最新 upstream Commit: $LATEST_COMMIT"
-          # … 省略强制触发逻辑 …
-          RELEASE_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body')
-          CLEAN_BODY=$(echo "$RELEASE_BODY" | tr -d '*' | tr -d '🔍')
-          echo "Cleaned Release body: $CLEAN_BODY"
-          # 这里更新为同时匹配英文和中文标签
-          PREVIOUS_COMMIT=$(echo "$CLEAN_BODY" \
-            | grep -Eo '(Commit|提交 ID)[:：]\s*[0-9a-f]{40}' \
-            | awk -F'[:：]' '{print $2}' \
-            | xargs)
-          echo "上次记录的 Commit: $PREVIOUS_COMMIT"
+          # … 获取 RELEASE_BODY、清理、提取 PREVIOUS_COMMIT 等 …
           if [[ -z "$PREVIOUS_COMMIT" || "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
             echo "🔄 发现 upstream 更新，触发构建"
             echo "new_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
