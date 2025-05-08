@@ -1,7 +1,7 @@
 # NaiveProxy Caddy 定制编译
 
 [![GitHub Release](https://img.shields.io/github/v/release/wekingchen/mycaddy?style=flat-square\&logo=github)](https://github.com/wekingchen/mycaddy/releases)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/wekingchen/mycaddy/build-and-release-caddy.yml?style=flat-square\&logo=github-actions)](https://github.com/wekingchen/mycaddy/actions)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/wekingchen/mycaddy/build-caddy.yml?style=flat-square\&logo=github-actions)](https://github.com/wekingchen/mycaddy/actions)
 
 基于 Caddy 官方镜像，集成 **forwardproxy (udpinhttp 分支)** 与多款扩展插件的定制化构建。通过 GitHub Actions 实现：
 
