@@ -1,8 +1,8 @@
-name: Build and Release Caddy with Forwardproxy
+name: 构建与发布 NaiveProxy Caddy
 
 on:
   schedule:
-    # UTC 16:00 触发 → 北京时间每夜 00:00
+    # 每天 UTC 16:00（北京时间 00:00）触发
     - cron: '0 16 * * *'
   workflow_dispatch:
     inputs:
@@ -16,30 +16,31 @@ permissions:
 
 jobs:
   check-updates:
+    name: 检测 upstream 更新
     runs-on: ubuntu-latest
     outputs:
       new_commit: ${{ steps.check.outputs.new_commit }}
     steps:
-      - name: 获取 imgk/forwardproxy udpinhttp 分支最新 Commit
+      - name: 获取 forwardproxy 最新 Commit
         id: check
         run: |
-          LATEST=$(curl -s https://api.github.com/repos/imgk/forwardproxy/commits/udpinhttp | jq -r '.sha')
-          echo "最新 Commit: $LATEST"
+          LATEST_COMMIT=$(curl -s https://api.github.com/repos/imgk/forwardproxy/commits/udpinhttp | jq -r '.sha')
+          echo "最新 upstream Commit: $LATEST_COMMIT"
           if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
-            echo "🔄 手动触发，强制编译"
+            echo "🔄 手动触发：强制编译"
             echo "new_commit=forced" >> $GITHUB_OUTPUT
             exit 0
           fi
-          # 拉取上次 Release Body 并提取 Commit
-          BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          RELEASE_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body')
-          CLEAN=$(echo "$BODY" | tr -d '*' | tr -d '🔍')
-          PREV=$(echo "$CLEAN" | grep -Eo 'Commit:\s*[0-9a-f]{40}' | awk '{print $2}')
-          if [[ -z "$PREV" || "$LATEST" != "$PREV" ]]; then
-            echo "🔄 发现更新或首次编译"
-            echo "new_commit=$LATEST" >> $GITHUB_OUTPUT
+          CLEAN_BODY=$(echo "$RELEASE_BODY" | tr -d '*' | tr -d '🔍')
+          PREVIOUS_COMMIT=$(echo "$CLEAN_BODY" | grep -Eo 'Commit[:：]\s*[0-9a-f]{40}' | awk -F'[:：]' '{print $2}' | xargs)
+          echo "上次记录的 Commit: $PREVIOUS_COMMIT"
+          if [[ -z "$PREVIOUS_COMMIT" || "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
+            echo "🔄 发现 upstream 更新，触发构建"
+            echo "new_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
           else
-            echo "✅ 无更新，跳过"
+            echo "✅ 无更新，跳过构建"
             echo "new_commit=" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -54,6 +55,7 @@ jobs:
           path: new_commit.txt
 
   build:
+    name: 编译 Caddy（多架构）
     needs: check-updates
     if: ${{ needs.check-updates.outputs.new_commit != '' }}
     runs-on: ubuntu-latest
@@ -61,16 +63,13 @@ jobs:
       matrix:
         arch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v3
-
       - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
           go-version: 'stable'
 
-      - name: 克隆 forwardproxy (udpinhttp)
-        run: |
-          git clone --branch udpinhttp --depth 1 https://github.com/imgk/forwardproxy.git forwardproxy
+      - name: 克隆 forwardproxy 源码（udpinhttp）
+        run: git clone --branch udpinhttp --depth 1 https://github.com/imgk/forwardproxy.git forwardproxy
 
       - name: 安装 xcaddy
         run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
@@ -95,7 +94,7 @@ jobs:
       - name: 校验架构并打包
         run: |
           file caddy_${{ matrix.arch }}
-          tar czf caddy_${{ matrix.arch }}.tar.gz caddy_${{ matrix.arch }}
+          tar -czf caddy_${{ matrix.arch }}.tar.gz caddy_${{ matrix.arch }}
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
@@ -104,76 +103,95 @@ jobs:
           path: caddy_${{ matrix.arch }}.tar.gz
 
   release:
+    name: 发布 Release
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: 下载 new_commit
+      - name: 下载 new_commit.txt
         uses: actions/download-artifact@v4
         with:
           name: new_commit
           path: .
 
-      - id: get_commit
+      - name: 解析 Commit ID
+        id: get_commit
         run: |
           RAW=$(cat new_commit.txt)
           if [[ "$RAW" == "forced" ]]; then
             RAW=$(curl -s https://api.github.com/repos/imgk/forwardproxy/commits/udpinhttp | jq -r '.sha')
           fi
-          echo "Forwardproxy Commit: $RAW"
+          echo "Commit ID: $RAW"
           echo "COMMIT=$RAW" >> $GITHUB_ENV
 
-      - name: 下载二进制包
+      - name: 下载 amd64 包
         uses: actions/download-artifact@v4
         with:
           name: caddy-amd64
           path: .
-      - uses: actions/download-artifact@v4
+
+      - name: 下载 arm64 包
+        uses: actions/download-artifact@v4
         with:
           name: caddy-arm64
           path: .
 
-      - id: get_caddy_version
+      - name: 获取 Caddy 官方最新版本
+        id: get_caddy_version
         run: |
-          VER=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+          VER=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest \
+            | jq -r '.tag_name' | sed 's/^v//')
           echo "CADDY_VERSION=$VER" >> $GITHUB_ENV
 
-      - name: 生成 Release Tag
+      - name: 生成 发布 Tag
         run: |
           TAG="v${{ env.CADDY_VERSION }}-$(date +'%Y%m%d-%H%M%S')"
           echo "TAG=$TAG" >> $GITHUB_ENV
 
-      - name: 生成 Release Notes
+      - name: 生成 发布说明
         run: |
           cat <<EOF > release_notes.md
-          🚀 **NaiveProxy Caddy Release — ${{ env.TAG }}**
+          🚀 **NaiveProxy Caddy 发布版本 — ${{ env.TAG }}**
 
-          **包含插件列表：**
-          - forwardproxy（udpinhttp 分支）
-          - jsonc-adapter
-          - caddy-l4（TCP/UDP 代理）
-          - caddy-dns/cloudflare
-          - caddy-dns/tencentcloud
-          - caddy-dns/duckdns
-          - caddy-dynamicdns
-          - caddy-events-exec
-          - caddy-cloudflare-ip
-          - caddy-trusted-cloudfront
-          - caddy-webdav
-          - caddy-trojan
+          [![GitHub Release](https://img.shields.io/github/v/release/wekingchen/mycaddy?style=flat-square&logo=github)]
+          [![Build Status](https://img.shields.io/github/actions/workflow/status/wekingchen/mycaddy/build-and-release-caddy.yml?style=flat-square&logo=github-actions)]
 
-          🔍 **Commit:** ${{ env.COMMIT }}
+          ## 🧩 内置插件集
+          | 插件名称                    | 功能描述                            |
+          |-----------------------------|-------------------------------------|
+          | forwardproxy                | NaïveProxy 代理支持（udpinhttp）    |
+          | jsonc-adapter               | 支持保留注释的 JSONC 配置           |
+          | caddy-l4                    | TCP/UDP 第四层代理                  |
+          | caddy-dns/cloudflare        | Cloudflare DNS 解析                 |
+          | caddy-dns/tencentcloud      | 腾讯云 DNS 解析                     |
+          | caddy-dns/duckdns           | DuckDNS 动态域名解析                |
+          | caddy-dynamicdns            | 动态 DNS 更新                       |
+          | caddy-events-exec           | 事件触发自动化执行                  |
+          | caddy-cloudflare-ip         | Cloudflare IP 优选                  |
+          | caddy-trusted-cloudfront    | CloudFront 可信代理支持             |
+          | caddy-webdav                | WebDAV 文件服务器                   |
+          | caddy-trojan                | Trojan 协议支持                     |
 
-          📥 [下载二进制文件](https://github.com/${{ github.repository }}/releases/tag/${{ env.TAG }})
+          ## ⚡ 构建特性
+          - **自动同步**：每日 UTC 16:00（北京时间 00:00）检测 upstream 更新
+          - **智能触发**：仅在上游代码变更或手动触发时编译
+          - **双架构输出**：同时生成 `amd64` & `arm64`
+          - **自动打包**：压缩为 `.tar.gz` 并上传到 Release
+
+          🔍 **提交 ID：** ${{ env.COMMIT }}
+
+          📥 **下载二进制包：**
+          - caddy_amd64.tar.gz
+          - caddy_arm64.tar.gz
           EOF
 
-      - name: 发布 Release
+      - name: 创建 GitHub Release 并上传二进制包
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           name: "NaiveProxy Caddy ${{ env.TAG }}"
           body_path: release_notes.md
           files: |
-            caddy-amd64.tar.gz
-            caddy-arm64.tar.gz
+            caddy_amd64.tar.gz
+            caddy_arm64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
