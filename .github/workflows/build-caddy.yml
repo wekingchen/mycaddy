@@ -102,6 +102,7 @@ jobs:
           export GOOS=linux
           export GOARCH=${{ matrix.arch }}
           xcaddy build --output caddy_${{ matrix.arch }} \
+            --with github.com/caddyserver/jsonc-adapter \
             --with github.com/mholt/caddy-l4 \
             --with github.com/caddy-dns/cloudflare \
             --with github.com/caddy-dns/tencentcloud \
@@ -187,7 +188,8 @@ jobs:
           🚀 **NaiveProxy Caddy Release - ${{ env.release_tag }}**
           
           **📌 包含插件列表：**
-          - ✅ forwardproxy（NaïveProxy 代理）
+          - ✅ forwardproxy（NaïveProxy 代理，采用 imgk 大源码，支持 UoT）
+          - ✅ jsonc-adapter（支持 Caddy 可使用 JSONC 格式配置文件，即可保留注释使用）
           - ✅ caddy-l4（TCP/UDP 代理）
           - ✅ caddy-dns/cloudflare（Cloudflare DNS 解析）
           - ✅ caddy-dns/tencentcloudd（DNSPod 解析）
