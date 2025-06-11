@@ -205,12 +205,12 @@ jobs:
           EOF
 
       - name: 创建 GitHub Release 并上传二进制包
-        uses: softprops/action-gh-release@v2
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: ${{ env.TAG }}
+          tag: ${{ env.TAG }}
           name: "NaiveProxy Caddy ${{ env.TAG }}"
-          body_path: release_notes.md
-          files: |
+          bodyFile: release_notes.md
+          artifacts: |
             caddy_amd64.tar.gz
             caddy_arm64.tar.gz
         env:
