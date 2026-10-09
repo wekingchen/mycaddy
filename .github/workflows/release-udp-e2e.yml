@@ -77,6 +77,7 @@ jobs:
           cat >/tmp/direct.Caddyfile <<'CADDY'
           {
               admin off
+              auto_https disable_redirects
               servers {
                   protocols h1 h2 h3
               }
@@ -151,6 +152,7 @@ jobs:
           cat >/tmp/chain.Caddyfile <<'CADDY'
           {
               admin off
+              auto_https disable_redirects
               servers {
                   protocols h1 h2 h3
               }
