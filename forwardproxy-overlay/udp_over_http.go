@@ -625,6 +625,44 @@ func (rm RequestMatcher) Extract(input string) (map[string]string, error) {
 	return result, nil
 }
 
+func http3StreamFromResponseWriter(w http.ResponseWriter) (*http3.Stream, error) {
+	for i := 0; i < 16; i++ {
+		if streamer, ok := w.(http3.HTTPStreamer); ok {
+			return streamer.HTTPStream(), nil
+		}
+		unwrapper, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return nil, fmt.Errorf("HTTP/3 ResponseWriter %T does not expose HTTPStream", w)
+		}
+		next := unwrapper.Unwrap()
+		if next == nil || next == w {
+			return nil, fmt.Errorf("HTTP/3 ResponseWriter unwrap stopped at %T", w)
+		}
+		w = next
+	}
+	return nil, fmt.Errorf("HTTP/3 ResponseWriter unwrap depth exceeded")
+}
+
+type http2Stream struct {
+	r io.Reader
+	w http.ResponseWriter
+}
+
+func (s *http2Stream) Read(p []byte) (int, error) {
+	return s.r.Read(p)
+}
+
+func (s *http2Stream) Write(p []byte) (int, error) {
+	n, err := s.w.Write(p)
+	if err != nil {
+		return n, err
+	}
+	if err := http.NewResponseController(s.w).Flush(); err != nil {
+		return n, fmt.Errorf("flush HTTP/2 response stream: %w", err)
+	}
+	return n, nil
+}
+
 type DatagramSender struct {
 	sync.Mutex
 	w io.Writer
@@ -661,6 +699,7 @@ func (srv udpProxyServer) HandleStream(c io.ReadWriter, req Request, rc *net.UDP
 		return srv.HandleStreamBind(c, req, rc)
 	}
 
+	srv.Debug("UDP-over-HTTP stream bridge started", zap.String("target", string(req)))
 	done := make(chan struct{})
 
 	go func() {
@@ -669,27 +708,34 @@ func (srv udpProxyServer) HandleStream(c io.ReadWriter, req Request, rc *net.UDP
 			data := Datagram{}
 			err := data.ReceiveBuffer(c, b)
 			if err != nil {
+				srv.Debug("UDP-over-HTTP stream read ended", zap.Error(err))
 				break
 			}
 
 			if data.Type != 0 {
+				srv.Debug("UDP-over-HTTP ignored non-payload datagram", zap.Uint64("type", data.Type))
 				continue
 			}
 
 			pl := &CompressedPayload{}
 			err = pl.Parse((data.Payload.(*BytePayload)).Payload)
 			if err != nil {
+				srv.Debug("UDP-over-HTTP payload parse failed", zap.Error(err))
 				break
 			}
 
 			if pl.ContextID != 0 {
+				srv.Debug("UDP-over-HTTP ignored nonzero context", zap.Uint64("context_id", pl.ContextID))
 				continue
 			}
 
+			srv.Debug("UDP-over-HTTP received stream payload", zap.Int("bytes", len(pl.Payload)))
 			_, err = rc.Write(pl.Payload)
 			if err != nil {
+				srv.Debug("UDP-over-HTTP UDP write failed", zap.Error(err))
 				break
 			}
+			srv.Debug("UDP-over-HTTP wrote payload to UDP target", zap.Int("bytes", len(pl.Payload)))
 		}
 
 		rc.Close()
@@ -700,8 +746,10 @@ func (srv udpProxyServer) HandleStream(c io.ReadWriter, req Request, rc *net.UDP
 	for {
 		nr, err := rc.Read(b)
 		if err != nil {
+			srv.Debug("UDP-over-HTTP UDP read ended", zap.Error(err))
 			break
 		}
+		srv.Debug("UDP-over-HTTP received UDP reply", zap.Int("bytes", nr))
 
 		data := Datagram{
 			Type: 0,
@@ -711,14 +759,15 @@ func (srv udpProxyServer) HandleStream(c io.ReadWriter, req Request, rc *net.UDP
 			Payload:   b[:nr],
 		}
 
-		// data.Length = quicvarint.Len(0) + uint64(nr)
 		data.Length = 1 + uint64(nr)
 		data.Payload = pl
 
 		err = data.Send(c)
 		if err != nil {
+			srv.Debug("UDP-over-HTTP stream reply write failed", zap.Error(err))
 			break
 		}
+		srv.Debug("UDP-over-HTTP wrote reply to stream", zap.Int("bytes", nr))
 	}
 
 	<-done
@@ -1067,20 +1116,22 @@ func (h Handler) tryUDPoverHTTP(w http.ResponseWriter, r *http.Request) (bool, e
 			return true, caddyhttp.Error(http.StatusInternalServerError, fmt.Errorf("ResponseWriter flush error: %v", err))
 		}
 
-		conn, _, err := rc.Hijack()
-		if err != nil {
-			return true, err
-		}
-		defer conn.Close()
-
-		return true, h.udpProxyServer.HandleStream(conn, req, rconn)
+		// HTTP/2 streams cannot be hijacked from net/http. Use the request body
+		// and ResponseWriter as the bidirectional stream instead. HTTP/2 permits
+		// concurrent request-body reads and response writes.
+		stream := &http2Stream{r: r.Body, w: w}
+		return true, h.udpProxyServer.HandleStream(stream, req, rconn)
 	case 3:
 		// slog.Info(fmt.Sprintf("handle UDP over HTTP/3.0 request: ---> %s", req))
 
 		w.Header().Set(http3.CapsuleProtocolHeader, CapsuleProtocolHeaderValue)
 		w.WriteHeader(http.StatusOK)
 
-		return true, h.udpProxyServer.HandlePacket(*(w.(http3.HTTPStreamer).HTTPStream()), req, rconn)
+		stream, err := http3StreamFromResponseWriter(w)
+		if err != nil {
+			return true, caddyhttp.Error(http.StatusInternalServerError, err)
+		}
+		return true, h.udpProxyServer.HandlePacket(*stream, req, rconn)
 	default:
 		return false, nil
 	}
