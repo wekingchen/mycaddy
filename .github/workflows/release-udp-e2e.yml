@@ -7,6 +7,7 @@ on:
       - '.github/workflows/release-udp-e2e.yml'
       - 'tests/udp-over-http-e2e.py'
       - 'tests/udp-e2e-go/**'
+      - 'tests/official-naive-e2e.sh'
   workflow_dispatch:
 
 permissions:
@@ -57,9 +58,13 @@ jobs:
           echo "NAIVE_BIN=$NAIVE_BIN" >> "$GITHUB_ENV"
 
       - name: 官方 naive 客户端 HTTP/2 隧道兼容性
+        id: naive_h2
+        continue-on-error: true
         run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h2
 
       - name: 官方 naive 客户端 HTTP/3 隧道兼容性
+        id: naive_h3
+        continue-on-error: true
         run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h3
 
       - name: HTTP/1.1 真实 UDP Echo 往返
@@ -85,14 +90,20 @@ jobs:
 
       - name: 三协议验收
         env:
+          NAIVE_H2_OUTCOME: ${{ steps.naive_h2.outcome }}
+          NAIVE_H3_OUTCOME: ${{ steps.naive_h3.outcome }}
           H2_OUTCOME: ${{ steps.h2.outcome }}
           H3_OUTCOME: ${{ steps.h3.outcome }}
         run: |
           set -euo pipefail
           echo "Latest Release: $LATEST_RELEASE"
-          echo "HTTP/1.1: PASS"
-          echo "HTTP/2: $H2_OUTCOME"
-          echo "HTTP/3: $H3_OUTCOME"
+          echo "Official naive H2 tunnel: $NAIVE_H2_OUTCOME"
+          echo "Official naive H3 tunnel: $NAIVE_H3_OUTCOME"
+          echo "HTTP/1.1 UDP: PASS"
+          echo "HTTP/2 UDP: $H2_OUTCOME"
+          echo "HTTP/3 UDP: $H3_OUTCOME"
+          test "$NAIVE_H2_OUTCOME" = success
+          test "$NAIVE_H3_OUTCOME" = success
           test "$H2_OUTCOME" = success
           test "$H3_OUTCOME" = success
-          echo "✅ 三协议真实 UDP Echo E2E 全部通过"
+          echo "✅ 官方 naive H2/H3 + H1/H2/H3 真实 UDP E2E 全部通过"
