@@ -42,7 +42,7 @@ jobs:
       - name: 启动内外 Caddy 和本地目标
         run: |
           set -euo pipefail
-          echo '127.0.0.1 localhost localhost' | sudo tee -a /etc/hosts >/dev/null
+          echo '127.0.0.1 outer.test inner.test' | sudo tee -a /etc/hosts >/dev/null
           mkdir -p /tmp/origin
           printf '%s\n' 'naiveproxy-connect-udp-real-chain-ok' >/tmp/origin/marker.txt
           python3 -m http.server 18081 --bind 127.0.0.1 --directory /tmp/origin >/tmp/origin.log 2>&1 &
@@ -51,12 +51,13 @@ jobs:
           cat >/tmp/chain.Caddyfile <<'CADDY'
           {
               admin off
+              debug
               auto_https disable_redirects
               servers {
                   protocols h1 h2 h3
               }
           }
-          :19443, localhost:19443 {
+          :19443, outer.test:19443 {
               tls internal
               @naive_preamble {
                   method GET
@@ -75,7 +76,7 @@ jobs:
                   }
               }
           }
-          :19444, localhost:19444 {
+          :19444, inner.test:19444 {
               tls internal
               @naive_preamble {
                   method GET
@@ -112,14 +113,14 @@ jobs:
           import json, os
           mode=os.environ["MODE"]
           proxies={
-              "outer":"quic://localhost:19443",
-              "inner":"quic://localhost:19444",
-              "chain":"quic://localhost:19444,quic://localhost:19443",
+              "outer":"quic://outer.test:19443",
+              "inner":"quic://inner.test:19444",
+              "chain":"quic://inner.test:19444,quic://outer.test:19443",
           }
           json.dump({
               "listen":"socks://127.0.0.1:11080",
               "proxy":proxies[mode],
-              "host-resolver-rules":"",
+              "host-resolver-rules":"MAP outer.test 127.0.0.1, MAP inner.test 127.0.0.1",
               "log":"","log-net-log":f"/tmp/naive-{mode}-netlog.json",
           },open(f"/tmp/naive-{mode}.json","w"))
           PY
@@ -127,7 +128,7 @@ jobs:
             pid=$!
             for i in $(seq 1 50); do if bash -c "echo >/dev/tcp/127.0.0.1/11080" 2>/dev/null; then break; fi; sleep .2; done
             if [[ "$mode" = outer ]]; then
-              curl -ksS --noproxy '' --max-time 8 --socks5-hostname 127.0.0.1:11080 -o /dev/null -w "CURL_CODE=%{http_code}\n" https://localhost:19444/ || true
+              curl -ksS --noproxy '' --max-time 8 --socks5-hostname 127.0.0.1:11080 -o /dev/null -w "CURL_CODE=%{http_code}\n" https://inner.test:19444/ || true
             else
               curl -sS --noproxy '' --max-time 8 --socks5-hostname 127.0.0.1:11080 http://127.0.0.1:18081/marker.txt || true
             fi
@@ -138,12 +139,18 @@ jobs:
             python3 - "$mode" <<'PY'
           import collections,json,sys
           path=f"/tmp/naive-{sys.argv[1]}-netlog.json"
-          try: d=json.load(open(path))
+          try: raw=[json.loads(x) for x in open(path)]
           except Exception as e: print("NETLOG_UNAVAILABLE",e);sys.exit(0)
-          ev=d.get("events",[]); print("NETLOG_EVENTS",len(ev))
-          interesting=[x for x in ev if ("QUIC" in str(x.get("type","")) or "HTTP3" in str(x.get("type","")) or x.get("params",{}).get("net_error"))]
-          for x in interesting[-35:]:
-            print("NETLOG",x.get("type"),str(x.get("params",{}))[:500])
+          constants=raw[0].get("constants",{})
+          names={v:k for k,v in constants.get("logEventTypes",{}).items()}
+          errors={v:k for k,v in constants.get("netError",{}).items()}
+          print("NETLOG_EVENTS",len(raw)-1)
+          for entry in raw[1:]:
+            d=entry.get("event",{}); p=d.get("params") or {}
+            t=names.get(d.get("type"),str(d.get("type")))
+            if t in ("UDP_CONNECT","UDP_SEND_ERROR","QUIC_SESSION_CLOSED","QUIC_SESSION_POOL_JOB_CONNECT","QUIC_SESSION_TRANSPORT_PARAMETERS_RECEIVED","QUIC_SESSION_H3_SETTINGS_RECEIVED","QUIC_SESSION_PACKET_RECEIVED","HTTP3_HEADERS_RECEIVED","CERT_VERIFIER_JOB","CERT_VERIFIER_JOB_FETCH_TRUST_ANCHORS") or ("net_error" in p and p["net_error"]<0):
+              if "net_error" in p: p["net_error"]=errors.get(p["net_error"],p["net_error"])
+              print("NETLOG",t,str(p)[:700])
           PY
           done
           echo "---- outer access ----"
