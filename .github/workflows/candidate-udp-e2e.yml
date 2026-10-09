@@ -256,7 +256,7 @@ jobs:
           }
           JSON
 
-          SSL_CERT_FILE="$CHAIN_CA" "$NAIVE_BIN" /tmp/naive-config.json >/tmp/naive.log 2>&1 &
+          SSL_CERT_FILE=/tmp/chain.crt "$NAIVE_BIN" /tmp/naive-config.json >/tmp/naive.log 2>&1 &
           NAIVE_PID=$!
 
           python3 - <<'PY'
@@ -272,7 +272,7 @@ jobs:
               raise SystemExit("NaiveProxy client did not start")
           PY
 
-          body="$(curl -fsS --max-time 15 --socks5-hostname 127.0.0.1:11080 http://127.0.0.1:18081/marker.txt)"
+          body="$(curl --noproxy '' -fsS --max-time 15 --socks5-hostname 127.0.0.1:11080 http://127.0.0.1:18081/marker.txt)"
           test "$body" = "naiveproxy-connect-udp-real-chain-ok"
 
           # 先结束客户端，再停止 Caddy，让长连接 CONNECT-UDP handler
