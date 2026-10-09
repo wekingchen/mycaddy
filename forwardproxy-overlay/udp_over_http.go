@@ -654,12 +654,13 @@ func (s *http2Stream) Read(p []byte) (int, error) {
 
 func (s *http2Stream) Write(p []byte) (int, error) {
 	n, err := s.w.Write(p)
-	if err == nil {
-		if flusher, ok := s.w.(http.Flusher); ok {
-			flusher.Flush()
-		}
+	if err != nil {
+		return n, err
 	}
-	return n, err
+	if err := http.NewResponseController(s.w).Flush(); err != nil {
+		return n, fmt.Errorf("flush HTTP/2 response stream: %w", err)
+	}
+	return n, nil
 }
 
 type DatagramSender struct {
