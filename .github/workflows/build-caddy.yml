@@ -16,7 +16,8 @@ on:
       - 'test/**'
     paths:
       - '.github/workflows/build-caddy.yml'
-      - 'forwardproxy-overlay/**'
+      - 'forwardproxy-overlay/udp_over_http.go'
+      - 'forwardproxy-overlay/forwardproxy_udp_test.go'
       - 'scripts/apply-forwardproxy-udp.py'
 
 permissions:
