@@ -260,15 +260,14 @@ go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 
 ## 当前验证状态
 
-截至 2026-10-09，正式工作流 #704 已验证：
+截至 2026-10-09，已直接运行最终编译出来的 amd64 Caddy，可复查的证据包括：
 
-- klzgrad `naive` Commit：`c096d6a00cb28e019cc1995b04bdc6a9311d8024`
-- Caddy：`v2.11.7`
-- amd64：回归测试、编译、模块校验、Artifact、Release 均成功
-- arm64：回归测试、编译、静态模块校验、Artifact、Release 均成功
-- 正式 Release：`v2.11.7-20261009-002817`
-- 已直接取 #704 正式 amd64 Artifact 做真实 UDP 回环 E2E：`mycaddy-real-udp-e2e-20261009` 经 Caddy 发往 UDP Echo Server，并原样返回，结果 `E2E_RESULT=PASS`
+- [候选构建 #37876720043](https://github.com/wekingchen/mycaddy/actions/runs/37876720043)：amd64、arm64 编译及现有模块/回归校验通过。
+- [三协议及官方客户端验收 #37877756536](https://github.com/wekingchen/mycaddy/actions/runs/37877756536)：HTTP/1.1、HTTP/2、HTTP/3 的真实 UDP Echo 均通过；官方 NaiveProxy 单层 H2/H3 及双层 QUIC-over-CONNECT-UDP 验证通过。
+- [双层 QUIC 诊断 #37876818236](https://github.com/wekingchen/mycaddy/actions/runs/37876818236)：外层较大 QUIC 包、内层默认 1200 字节的独立 Caddy 进程建立连接成功，检查到真实 UDP 双向转发，未见 `DATAGRAM frame too large` 或首次 QUIC 握手超时。
 
-真实 E2E 当前覆盖 **HTTP/1.1 Upgrade → UDP**。HTTP/2 Extended CONNECT 与 HTTP/3 Datagram 目前仍由回归测试和代码/二进制特征校验覆盖，不能把它们说成已经做过同等的真实网络 E2E。
+正式构建的 amd64 Job 现在也直接运行官方 NaiveProxy 的上述场景；只要失败，Release Job 就不得发布。arm64 通过实际交叉编译和静态插件校验，**没有宣称在 ARM64 真机上运行过 E2E**。
 
-后续版本以 Releases 和对应构建记录为准。
+另有 [发布后二次验收工作流](https://github.com/wekingchen/mycaddy/actions/workflows/release-udp-e2e.yml) 检验 Release 附件本身，不是仅检查开发分支代码。
+
+后续具体发布日期、版本与构建结果，请查看 [Releases](https://github.com/wekingchen/mycaddy/releases) 和对应工作流。
