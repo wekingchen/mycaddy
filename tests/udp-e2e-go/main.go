@@ -82,7 +82,7 @@ https://localhost:%d {
 	cmd := exec.Command(caddy, "run", "--config", caddyfile, "--adapter", "caddyfile")
 	cmd.Stdout = logf
 	cmd.Stderr = logf
-	cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+filepath.Join(dir, "data"), "XDG_CONFIG_HOME="+filepath.Join(dir, "config"))
+	cmd.Env = append(os.Environ(), "GODEBUG=http2xconnect=1", "XDG_DATA_HOME="+filepath.Join(dir, "data"), "XDG_CONFIG_HOME="+filepath.Join(dir, "config"))
 	if err := cmd.Start(); err != nil {
 		fail("start Caddy: %v", err)
 	}
