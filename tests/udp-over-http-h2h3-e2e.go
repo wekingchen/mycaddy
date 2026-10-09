@@ -192,6 +192,7 @@ func main() {
 	logPath := filepath.Join(tmp, "caddy.log")
 	config := fmt.Sprintf(`{
 	admin off
+	auto_https disable_redirects
 }
 https://localhost:%d {
 	tls internal
