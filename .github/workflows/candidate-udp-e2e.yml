@@ -157,6 +157,16 @@ jobs:
           go get github.com/quic-go/masque-go@v0.6.0
           go run . localhost:18443 127.0.0.1:19090
 
+      - name: 官方 NaiveProxy 单层 H2 TCP 通道基线
+        id: naive_h2_baseline
+        continue-on-error: true
+        run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h2
+
+      - name: 官方 NaiveProxy 单层 H3 TCP 通道基线
+        id: naive_h3_baseline
+        continue-on-error: true
+        run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h3
+
       - name: 官方 NaiveProxy 客户端真实 QUIC/CONNECT-UDP 链路
         id: naive
         continue-on-error: true
@@ -259,6 +269,8 @@ jobs:
           echo "H2=${{ steps.h2.outcome }}"
           echo "H3=${{ steps.h3.outcome }}"
           echo "NAIVE=${{ steps.naive.outcome }}"
+          echo "NAIVE_H2_BASELINE=${{ steps.naive_h2_baseline.outcome }}"
+          echo "NAIVE_H3_BASELINE=${{ steps.naive_h3_baseline.outcome }}"
           test "${{ steps.h1.outcome }}" = success
           test "${{ steps.h2.outcome }}" = success
           test "${{ steps.h3.outcome }}" = success
