@@ -1,0 +1,288 @@
+name: 候选产物 E2E（H1/H2/H3 + NaiveProxy，不发布）
+on:
+  push:
+    branches: ['test/udp-e2e']
+    paths:
+      - '.github/workflows/candidate-udp-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-udp-e2e:
+    name: Latest Release 三协议真实 UDP 验证
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NAIVE_VERSION: v154.0.8037.49-4
+
+    steps:
+      - name: 检出 E2E 测试
+        uses: actions/checkout@v7
+
+      - name: 设置 Go（只编译测试客户端，不编译 Caddy）
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: 安装 HTTP/2 测试依赖
+        run: python3 -m pip install --disable-pip-version-check h2==4.3.0
+
+      - name: 下载测试分支候选 Caddy 原始二进制
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/release-e2e
+          RUN_ID=37873089934
+          for i in $(seq 1 120); do
+            state="$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion --jq '[.status,.conclusion] | @tsv')"
+            if [[ "$state" == *completed* ]]; then
+              [[ "$state" == *success* ]] || { echo "❌ 候选构建没有通过: $state"; exit 1; }
+              break
+            fi
+            echo "⏳ 等待候选构建 $RUN_ID: $state"
+            sleep 10
+          done
+          [[ "$state" == *success* ]] || { echo "❌ 候选构建超时或失败: $state"; exit 1; }
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name caddy-amd64 --dir /tmp/release-e2e
+          tar -xzf /tmp/release-e2e/caddy_amd64.tar.gz -C /tmp/release-e2e
+          chmod +x /tmp/release-e2e/caddy_amd64
+          echo "CADDY_RELEASE=candidate-run-$RUN_ID" | tee -a "$GITHUB_ENV"
+          /tmp/release-e2e/caddy_amd64 version
+
+      - name: 下载官方 NaiveProxy 客户端
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/naive
+          url="https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-linux-x64.tar.xz"
+          curl -fL "$url" -o /tmp/naive.tar.xz
+          tar -xJf /tmp/naive.tar.xz -C /tmp/naive
+          NAIVE_BIN="$(find /tmp/naive -type f -name naive | head -n1)"
+          test -n "$NAIVE_BIN"
+          chmod +x "$NAIVE_BIN"
+          echo "NAIVE_BIN=$NAIVE_BIN" | tee -a "$GITHUB_ENV"
+          "$NAIVE_BIN" --version
+
+      - name: 准备本地证书、UDP Echo 与协议测试 Caddy
+        run: |
+          set -euo pipefail
+          openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes             -keyout /tmp/e2e.key -out /tmp/e2e.crt             -subj '/CN=localhost'             -addext 'subjectAltName=DNS:localhost,DNS:outer.test,DNS:inner.test,IP:127.0.0.1'             >/dev/null 2>&1
+
+          cat >/tmp/udp-echo.py <<'PY'
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.bind(("127.0.0.1", 19090))
+          while True:
+              data, addr = s.recvfrom(65535)
+              print("UDP_ECHO_RX=" + data.decode("utf-8", "replace"), flush=True)
+              s.sendto(data, addr)
+          PY
+          python3 -u /tmp/udp-echo.py >/tmp/udp-echo.log 2>&1 &
+          echo $! >/tmp/udp-echo.pid
+
+          cat >/tmp/direct.Caddyfile <<'CADDY'
+          {
+              admin off
+              auto_https disable_redirects
+              servers {
+                  protocols h1 h2 h3
+              }
+          }
+          http://127.0.0.1:18080 {
+              forward_proxy {
+                  ports 19090
+                  acl {
+                      allow 127.0.0.1/32
+                  }
+              }
+          }
+          https://localhost:18443 {
+              tls /tmp/e2e.crt /tmp/e2e.key
+              forward_proxy {
+                  ports 19090
+                  acl {
+                      allow 127.0.0.1/32
+                  }
+              }
+          }
+          CADDY
+
+          GODEBUG=http2xconnect=1 /tmp/release-e2e/caddy_amd64 run --config /tmp/direct.Caddyfile --adapter caddyfile >/tmp/direct-caddy.log 2>&1 &
+          echo $! >/tmp/direct-caddy.pid
+
+          python3 - <<'PY'
+          import socket, time
+          deadline=time.time()+15
+          while time.time()<deadline:
+              try:
+                  with socket.create_connection(("127.0.0.1",18080),.5):
+                      break
+              except OSError:
+                  time.sleep(.2)
+          else:
+              raise SystemExit("Caddy did not start")
+          PY
+
+      - name: HTTP/1.1 CONNECT-UDP → UDP Echo
+        id: h1
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 tests/release-udp-e2e.py --protocol h1 --port 18080
+
+      - name: HTTP/2 Extended CONNECT-UDP → UDP Echo
+        id: h2
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/h2-e2e
+          cp tests/release-udp-h2.go /tmp/h2-e2e/main.go
+          cd /tmp/h2-e2e
+          go mod init mycaddy-release-h2-e2e
+          go get golang.org/x/net/http2@latest
+          go run . localhost:18443 127.0.0.1:19090
+
+      - name: HTTP/3 CONNECT-UDP Datagram → UDP Echo
+        id: h3
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/h3-e2e
+          cp tests/release-udp-h3.go /tmp/h3-e2e/main.go
+          cd /tmp/h3-e2e
+          go mod init mycaddy-release-h3-e2e
+          go get github.com/quic-go/masque-go@v0.6.0
+          go run . localhost:18443 127.0.0.1:19090
+
+      - name: 官方 NaiveProxy 客户端真实 QUIC/CONNECT-UDP 链路
+        id: naive
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          kill "$(cat /tmp/direct-caddy.pid)" || true
+          wait "$(cat /tmp/direct-caddy.pid)" 2>/dev/null || true
+
+          echo '127.0.0.1 outer.test inner.test' | sudo tee -a /etc/hosts >/dev/null
+          mkdir -p /tmp/origin
+          printf '%s\n' 'naiveproxy-connect-udp-real-chain-ok' >/tmp/origin/marker.txt
+          python3 -m http.server 18081 --bind 127.0.0.1 --directory /tmp/origin >/tmp/origin.log 2>&1 &
+          ORIGIN_PID=$!
+
+          cat >/tmp/chain.Caddyfile <<'CADDY'
+          {
+              admin off
+              auto_https disable_redirects
+              servers {
+                  protocols h1 h2 h3
+              }
+          }
+          https://outer.test:19443 {
+              tls /tmp/e2e.crt /tmp/e2e.key
+              log {
+                  output file /tmp/outer-access.log
+                  format json
+              }
+              forward_proxy {
+                  basic_auth e2e e2e
+                  ports 19444
+                  acl {
+                      allow 127.0.0.1/32
+                  }
+              }
+          }
+          https://inner.test:19444 {
+              tls /tmp/e2e.crt /tmp/e2e.key
+              forward_proxy {
+                  basic_auth e2e e2e
+                  ports 18081
+                  acl {
+                      allow 127.0.0.1/32
+                  }
+              }
+          }
+          CADDY
+
+          GODEBUG=http2xconnect=1 /tmp/release-e2e/caddy_amd64 run --config /tmp/chain.Caddyfile --adapter caddyfile >/tmp/chain-caddy.log 2>&1 &
+          CHAIN_CADDY_PID=$!
+          sleep 2
+          kill -0 "$CHAIN_CADDY_PID"
+
+          cat >/tmp/naive-config.json <<'JSON'
+          {
+            "listen": "socks://127.0.0.1:11080",
+            "proxy": "quic://e2e:e2e@inner.test:19444,quic://e2e:e2e@outer.test:19443",
+            "host-resolver-rules": "MAP inner.test 127.0.0.1, MAP outer.test 127.0.0.1",
+            "log": ""
+          }
+          JSON
+
+          SSL_CERT_FILE=/tmp/e2e.crt "$NAIVE_BIN" /tmp/naive-config.json >/tmp/naive.log 2>&1 &
+          NAIVE_PID=$!
+
+          python3 - <<'PY'
+          import socket, time
+          deadline=time.time()+15
+          while time.time()<deadline:
+              try:
+                  with socket.create_connection(("127.0.0.1",11080),.5):
+                      break
+              except OSError:
+                  time.sleep(.2)
+          else:
+              raise SystemExit("NaiveProxy client did not start")
+          PY
+
+          body="$(curl -fsS --max-time 15 --socks5-hostname 127.0.0.1:11080 http://127.0.0.1:18081/marker.txt)"
+          test "$body" = "naiveproxy-connect-udp-real-chain-ok"
+
+          kill "$NAIVE_PID" || true
+          wait "$NAIVE_PID" 2>/dev/null || true
+          sleep 1
+
+          grep -F '.well-known/masque/udp/inner.test/19444/' /tmp/outer-access.log
+          grep -F '"proto":"HTTP/3.0"' /tmp/outer-access.log
+
+          echo "NAIVE_OFFICIAL_CLIENT_CONNECT_UDP_CHAIN=PASS"
+
+          kill "$CHAIN_CADDY_PID" "$ORIGIN_PID" || true
+          wait "$CHAIN_CADDY_PID" 2>/dev/null || true
+          wait "$ORIGIN_PID" 2>/dev/null || true
+
+
+      - name: 最终判定
+        if: always()
+        run: |
+          echo "H1=${{ steps.h1.outcome }}"
+          echo "H2=${{ steps.h2.outcome }}"
+          echo "H3=${{ steps.h3.outcome }}"
+          echo "NAIVE=${{ steps.naive.outcome }}"
+          test "${{ steps.h1.outcome }}" = success
+          test "${{ steps.h2.outcome }}" = success
+          test "${{ steps.h3.outcome }}" = success
+          test "${{ steps.naive.outcome }}" = success
+
+      - name: 汇总三协议真实 UDP 记录
+        if: always()
+        run: |
+          echo "Latest Release: ${CADDY_RELEASE:-unknown}"
+          echo "NaiveProxy: ${NAIVE_VERSION}"
+          echo '--- UDP Echo ---'
+          cat /tmp/udp-echo.log 2>/dev/null || true
+          echo '--- Direct Caddy ---'
+          tail -n 100 /tmp/direct-caddy.log 2>/dev/null || true
+          echo '--- NaiveProxy ---'
+          tail -n 100 /tmp/naive.log 2>/dev/null || true
+          echo '--- Chain Caddy ---'
+          tail -n 100 /tmp/chain-caddy.log 2>/dev/null || true
+          echo '--- Outer access ---'
+          cat /tmp/outer-access.log 2>/dev/null || true
+
+      - name: 清理后台进程
+        if: always()
+        run: |
+          for f in /tmp/direct-caddy.pid /tmp/udp-echo.pid; do
+            if [ -f "$f" ]; then kill "$(cat "$f")" 2>/dev/null || true; fi
+          done
