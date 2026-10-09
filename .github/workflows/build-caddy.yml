@@ -132,18 +132,7 @@ jobs:
           cp forwardproxy-overlay/forwardproxy_udp_test.go forwardproxy/
           python3 scripts/apply-forwardproxy-udp.py forwardproxy/forwardproxy.go
 
-          cd forwardproxy
-          go mod edit -require=github.com/dunglas/httpsfv@v1.1.0
-          go mod edit -require=github.com/sagernet/quic-go@v0.61.0-sing-box-mod.9
-          go mod tidy
-
           echo "✅ UDP-over-HTTP overlay 已应用"
-
-      - name: 运行 forwardproxy 回归测试
-        working-directory: forwardproxy
-        run: |
-          set -euo pipefail
-          go test ./...
 
       - name: 准备 klzgrad 指定的 Caddy + BBRv1
         env:
@@ -157,6 +146,19 @@ jobs:
 
           git -C caddy-bbr apply "$GITHUB_WORKSPACE/forwardproxy/caddy-sing-quic-bbrv1.patch"
           echo "✅ 已应用 klzgrad 的 sing-quic BBRv1 Caddy 补丁"
+
+      - name: 运行 forwardproxy 回归测试
+        working-directory: forwardproxy
+        run: |
+          set -euo pipefail
+
+          # 测试必须和最终二进制使用同一套 patched Caddy / SagerNet QUIC，
+          # 避免 klzgrad 原 go.mod 中旧 Caddy 的 quic-go 与 BBRv1 栈混用。
+          go mod edit -replace=github.com/caddyserver/caddy/v2=../caddy-bbr
+          go mod edit -require=github.com/dunglas/httpsfv@v1.1.0
+          go mod edit -require=github.com/sagernet/quic-go@v0.61.0-sing-box-mod.9
+          go mod tidy
+          go test ./...
 
       - name: 安装 xcaddy
         run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
