@@ -189,8 +189,13 @@ jobs:
                   protocols h1 h2 h3
               }
           }
-          https://outer.test:19443 {
+          :19443, outer.test:19443 {
               tls /tmp/e2e.crt /tmp/e2e.key
+              @naive_preamble {
+                  method GET
+                  path /
+              }
+              respond @naive_preamble 204
               log {
                   output file /tmp/outer-access.log
                   format json
@@ -209,8 +214,13 @@ jobs:
                   }
               }
           }
-          https://inner.test:19444 {
+          :19444, inner.test:19444 {
               tls /tmp/e2e.crt /tmp/e2e.key
+              @naive_preamble {
+                  method GET
+                  path /
+              }
+              respond @naive_preamble 204
 
               @naive_preamble {
                   method GET
