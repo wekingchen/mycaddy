@@ -1090,7 +1090,7 @@ func (h Handler) tryUDPoverHTTP(w http.ResponseWriter, r *http.Request) (bool, e
 		// slog.Info(fmt.Sprintf("handle UDP over HTTP/1.1 request: ---> %s", req))
 
 		w.Header().Set("Connection", "Upgrade")
-		w.Header().Set("Upgrade:", RequestProtocol)
+		w.Header().Set("Upgrade", RequestProtocol)
 		w.Header().Set(http3.CapsuleProtocolHeader, CapsuleProtocolHeaderValue)
 		if req == "*" {
 			w.Header().Set(ConnectUDPBindHeader, ConnectUDPBindHeaderValue)
