@@ -236,7 +236,7 @@ jobs:
           cat >/tmp/naive-config.json <<'JSON'
           {
             "listen": "socks://127.0.0.1:11080",
-            "proxy": "quic://inner.localhost:19444,quic://outer.localhost:19443",
+            "proxy": "quic://outer.localhost:19443,quic://inner.localhost:19444",
             "host-resolver-rules": "MAP inner.localhost 127.0.0.1, MAP outer.localhost 127.0.0.1",
             "log": ""
           }
