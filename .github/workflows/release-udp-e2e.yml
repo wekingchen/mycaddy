@@ -1,25 +1,63 @@
 name: Latest Release UDP E2E（不重新编译）
+
 on:
   push:
     branches: ['test/udp-e2e']
-    paths: ['.github/workflows/release-udp-e2e.yml']
+    paths:
+      - '.github/workflows/release-udp-e2e.yml'
+      - 'tests/udp-over-http-e2e.py'
+      - 'tests/udp-e2e-go/**'
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   release-udp-e2e:
+    name: Latest Release HTTP/1.1 + HTTP/2 + HTTP/3 UDP E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      - name: 设置 Go 测试环境
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          cache: false
+
       - name: 下载 Latest Release 原始二进制
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          mkdir -p /tmp/release-e2e
+          gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '"LATEST_RELEASE=" + .tagName' | tee -a "$GITHUB_ENV"
           gh release download --repo "$GITHUB_REPOSITORY" --pattern 'caddy_amd64.tar.gz' --dir /tmp/release-e2e
           tar -xzf /tmp/release-e2e/caddy_amd64.tar.gz -C /tmp/release-e2e
           chmod +x /tmp/release-e2e/caddy_amd64
           /tmp/release-e2e/caddy_amd64 version
+          sha256sum /tmp/release-e2e/caddy_amd64.tar.gz /tmp/release-e2e/caddy_amd64
+
       - name: HTTP/1.1 真实 UDP Echo 往返
         run: python3 tests/udp-over-http-e2e.py /tmp/release-e2e/caddy_amd64
+
+      - name: 准备 HTTP/2 + HTTP/3 E2E 客户端
+        working-directory: tests/udp-e2e-go
+        run: |
+          set -euo pipefail
+          go mod tidy
+          go build -o /tmp/udp-e2e-client .
+
+      - name: HTTP/2 Extended CONNECT 真实 UDP Echo 往返
+        run: /tmp/udp-e2e-client /tmp/release-e2e/caddy_amd64 h2
+
+      - name: HTTP/3 CONNECT-UDP Datagram 真实 UDP Echo 往返
+        run: /tmp/udp-e2e-client /tmp/release-e2e/caddy_amd64 h3
+
+      - name: 三协议验收
+        run: |
+          echo "✅ Latest Release: $LATEST_RELEASE"
+          echo "✅ HTTP/1.1 CONNECT-UDP UDP Echo PASS"
+          echo "✅ HTTP/2 Extended CONNECT UDP Echo PASS"
+          echo "✅ HTTP/3 CONNECT-UDP Datagram UDP Echo PASS"
