@@ -1,0 +1,214 @@
+name: 候选产物 + 官方 NaiveProxy CONNECT-UDP E2E
+on:
+  push:
+    branches: ['test/udp-e2e']
+    paths: ['.github/workflows/candidate-naive-e2e.yml']
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  naive-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_RUN_ID: '37873089934'
+      NAIVE_VERSION: 'v154.0.8037.49-4'
+    steps:
+      - name: 下载候选 Caddy artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/candidate
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name caddy-amd64 --dir /tmp/candidate
+          tar -xzf /tmp/candidate/caddy_amd64.tar.gz -C /tmp/candidate
+          chmod +x /tmp/candidate/caddy_amd64
+          /tmp/candidate/caddy_amd64 version
+
+      - name: 下载官方 NaiveProxy 客户端
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/naive
+          curl -fL "https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-linux-x64.tar.xz" -o /tmp/naive.tar.xz
+          tar -xJf /tmp/naive.tar.xz -C /tmp/naive
+          NAIVE_BIN="$(find /tmp/naive -type f -name naive | head -n1)"
+          test -n "$NAIVE_BIN"
+          chmod +x "$NAIVE_BIN"
+          echo "NAIVE_BIN=$NAIVE_BIN" >> "$GITHUB_ENV"
+          "$NAIVE_BIN" --version
+
+      - name: 启动候选 Caddy 双 QUIC 代理
+        run: |
+          set -euo pipefail
+          echo '127.0.0.1 outer.test inner.test' | sudo tee -a /etc/hosts >/dev/null
+          TARGET_HOST="$(hostname -I | awk '{print $1}')"
+          echo "TARGET_HOST=$TARGET_HOST" >> "$GITHUB_ENV"
+          mkdir -p /tmp/e2e-data /tmp/e2e-config
+
+          cat >/tmp/chain.Caddyfile <<EOF
+          {
+              debug
+              admin off
+              auto_https disable_redirects
+          }
+
+          https://outer.test:19443 {
+              tls internal
+              log {
+                  output file /tmp/outer-access.log
+                  format json
+              }
+
+              @naive_preamble {
+                  method GET
+                  path /
+              }
+              respond @naive_preamble 204
+
+              forward_proxy {
+                  ports 19444
+                  acl {
+                      allow 127.0.0.1/32
+                  }
+              }
+          }
+
+          https://inner.test:19444 {
+              tls internal
+              log {
+                  output file /tmp/inner-access.log
+                  format json
+              }
+
+              @naive_preamble {
+                  method GET
+                  path /
+              }
+              respond @naive_preamble 204
+
+              forward_proxy {
+                  ports 19110
+                  acl {
+                      allow $TARGET_HOST/32
+                  }
+              }
+          }
+          EOF
+
+          GODEBUG=http2xconnect=1           XDG_DATA_HOME=/tmp/e2e-data           XDG_CONFIG_HOME=/tmp/e2e-config           /tmp/candidate/caddy_amd64 run --config /tmp/chain.Caddyfile --adapter caddyfile >/tmp/caddy.log 2>&1 &
+          echo $! >/tmp/caddy.pid
+
+          for _ in $(seq 1 100); do
+            test -s /tmp/e2e-data/caddy/pki/authorities/local/root.crt && break
+            kill -0 "$(cat /tmp/caddy.pid)" 2>/dev/null || { cat /tmp/caddy.log; exit 1; }
+            sleep .1
+          done
+          test -s /tmp/e2e-data/caddy/pki/authorities/local/root.crt
+
+      - name: 启动真实 TCP Echo 目标
+        run: |
+          set -euo pipefail
+          cat >/tmp/tcp-echo.py <<'PY'
+          import socket
+          s=socket.socket()
+          s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+          s.bind(("0.0.0.0",19110))
+          s.listen(1)
+          print("ECHO_READY",flush=True)
+          c,a=s.accept()
+          with c:
+              c.settimeout(20)
+              data=c.recv(65535)
+              print("ECHO_RX="+data.decode("utf-8","replace"),flush=True)
+              c.sendall(data)
+              print("ECHO_TX="+data.decode("utf-8","replace"),flush=True)
+          s.close()
+          PY
+          python3 -u /tmp/tcp-echo.py >/tmp/tcp-echo.log 2>&1 &
+          echo $! >/tmp/echo.pid
+          for _ in $(seq 1 50); do
+            grep -q ECHO_READY /tmp/tcp-echo.log && break
+            sleep .1
+          done
+          grep -q ECHO_READY /tmp/tcp-echo.log
+
+      - name: 官方 NaiveProxy 双 QUIC 链触发 CONNECT-UDP
+        run: |
+          set -euo pipefail
+          cat >/tmp/naive.json <<'JSON'
+          {
+            "listen": "socks://127.0.0.1:11080",
+            "proxy": "quic://inner.test:19444,quic://outer.test:19443",
+            "host-resolver-rules": "MAP inner.test 127.0.0.1, MAP outer.test 127.0.0.1",
+            "log": "/tmp/naive.log"
+          }
+          JSON
+
+          SSL_CERT_FILE=/tmp/e2e-data/caddy/pki/authorities/local/root.crt             "$NAIVE_BIN" /tmp/naive.json &
+          echo $! >/tmp/naive.pid
+
+          python3 - <<'PY'
+          import os,socket,struct,time
+          target=os.environ["TARGET_HOST"]
+          payload=b"official-naive-real-connect-udp-e2e"
+          deadline=time.time()+15
+          while True:
+              try:
+                  s=socket.create_connection(("127.0.0.1",11080),timeout=.5)
+                  break
+              except OSError:
+                  if time.time()>deadline: raise
+                  time.sleep(.1)
+          with s:
+              s.settimeout(20)
+              s.sendall(b"\x05\x01\x00")
+              assert s.recv(2)==b"\x05\x00"
+              s.sendall(b"\x05\x01\x00\x01"+socket.inet_aton(target)+struct.pack("!H",19110))
+              h=s.recv(4)
+              if len(h)!=4 or h[1]!=0: raise RuntimeError(f"SOCKS CONNECT failed {h.hex()}")
+              atyp=h[3]
+              if atyp==1: need=6
+              elif atyp==4: need=18
+              elif atyp==3:
+                  n=s.recv(1)[0]; need=n+2
+              else: raise RuntimeError(f"bad ATYP {atyp}")
+              rest=b""
+              while len(rest)<need:
+                  rest+=s.recv(need-len(rest))
+              s.sendall(payload)
+              got=b""
+              while len(got)<len(payload):
+                  p=s.recv(len(payload)-len(got))
+                  if not p: raise RuntimeError("tunnel closed before echo")
+                  got+=p
+              if got!=payload: raise RuntimeError((payload,got))
+          print("OFFICIAL_NAIVE_CHAIN_PAYLOAD=PASS")
+          PY
+
+          wait "$(cat /tmp/echo.pid)"
+          grep -F 'ECHO_RX=official-naive-real-connect-udp-e2e' /tmp/tcp-echo.log
+          grep -F 'ECHO_TX=official-naive-real-connect-udp-e2e' /tmp/tcp-echo.log
+
+          # 外层 QUIC proxy 必须实际收到 RFC 9298 CONNECT-UDP。
+          grep -F '.well-known/masque/udp/inner.test/19444/' /tmp/outer-access.log
+          grep -F '"proto":"HTTP/3.0"' /tmp/outer-access.log
+          echo 'OFFICIAL_NAIVE_H3_CONNECT_UDP_CHAIN=PASS'
+
+      - name: 汇总日志
+        if: always()
+        run: |
+          echo '--- NaiveProxy ---'; cat /tmp/naive.log 2>/dev/null || true
+          echo '--- TCP Echo ---'; cat /tmp/tcp-echo.log 2>/dev/null || true
+          echo '--- Outer access ---'; cat /tmp/outer-access.log 2>/dev/null || true
+          echo '--- Inner access ---'; cat /tmp/inner-access.log 2>/dev/null || true
+          echo '--- Caddy ---'; tail -n 150 /tmp/caddy.log 2>/dev/null || true
+
+      - name: 清理
+        if: always()
+        run: |
+          for f in /tmp/naive.pid /tmp/caddy.pid /tmp/echo.pid; do
+            [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
+          done
