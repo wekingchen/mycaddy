@@ -1,8 +1,8 @@
-name: 构建与发布 NaiveProxy Caddy
+name: 构建与发布 NaiveProxy Caddy（klzgrad + UDP-over-HTTP）
 
 on:
   schedule:
-    # 每天 UTC 16:00（北京时间 00:00）触发
+    # 每天 UTC 16:00（UTC+8 00:00）检查 klzgrad/forwardproxy:naive
     - cron: '0 16 * * *'
   workflow_dispatch:
     inputs:
@@ -10,208 +10,272 @@ on:
         description: '是否强制编译？'
         required: false
         default: 'false'
+  push:
+    branches:
+      - main
+      - test/klzgrad-udp-over-http
+    paths:
+      - '.github/workflows/build-caddy.yml'
+      - 'forwardproxy-overlay/**'
+      - 'scripts/apply-forwardproxy-udp.py'
 
 permissions:
   contents: write
 
 jobs:
   check-updates:
-    name: 检测 upstream 更新
+    name: 检测 klzgrad naive 更新
     runs-on: ubuntu-latest
     outputs:
-      new_commit: ${{ steps.check.outputs.new_commit }}
+      upstream_commit: ${{ steps.check.outputs.upstream_commit }}
+      caddy_version: ${{ steps.check.outputs.caddy_version }}
     steps:
-      - name: 获取 forwardproxy 最新 Commit 并判断是否强制编译
+      - name: 获取上游版本并判断是否需要构建
         id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_BUILD: ${{ github.event.inputs.force_build }}
         run: |
-          # 打印输入值，确认 force_build 是否传入
-          echo "输入的 force_build = '${{ github.event.inputs.force_build }}'"
+          set -euo pipefail
 
-          # 匹配大小写 true，开启强制编译
-          if [[ "${{ github.event.inputs.force_build }}" =~ ^[Tt]rue$ ]]; then
+          LATEST_COMMIT="$(curl -fsSL https://api.github.com/repos/klzgrad/forwardproxy/commits/naive | jq -r '.sha')"
+          CADDY_VERSION="$(curl -fsSL https://raw.githubusercontent.com/klzgrad/forwardproxy/naive/CADDY_VERSION | tr -d '\r\n')"
+
+          if [[ ! "$LATEST_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "❌ 无法取得 klzgrad/forwardproxy:naive 的有效 Commit"
+            exit 1
+          fi
+          if [[ -z "$CADDY_VERSION" ]]; then
+            echo "❌ 无法读取上游 CADDY_VERSION"
+            exit 1
+          fi
+
+          echo "📌 klzgrad naive 最新 Commit：$LATEST_COMMIT"
+          echo "📌 上游指定 Caddy：$CADDY_VERSION"
+          echo "caddy_version=$CADDY_VERSION" >> "$GITHUB_OUTPUT"
+
+          # 测试分支/代码 push 必须构建，用于验证 overlay 自身修改。
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "🧪 代码发生变化，执行验证构建"
+            echo "upstream_commit=$LATEST_COMMIT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$FORCE_BUILD" =~ ^[Tt]rue$ ]]; then
             echo "🔄 手动触发：强制编译"
-            echo "new_commit=forced" >> $GITHUB_OUTPUT
+            echo "upstream_commit=$LATEST_COMMIT" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # 获取 upstream 最新 Commit
-          LATEST_COMMIT=$(curl -s https://api.github.com/repos/imgk/forwardproxy/commits/udpinhttp | jq -r '.sha')
-          echo "最新 upstream Commit = $LATEST_COMMIT"
+          RELEASE_BODY="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.body' 2>/dev/null || true)"
+          CLEAN_BODY="$(printf '%s' "$RELEASE_BODY" | tr -d '*' | tr -d '🔍')"
+          PREVIOUS_COMMIT="$(printf '%s' "$CLEAN_BODY"             | grep -Eo '(上游提交|提交 ID|Commit)[:：][[:space:]]*[0-9a-f]{40}'             | head -n1             | grep -Eo '[0-9a-f]{40}' || true)"
 
-          # 拉取上次 Release Body 并清理多余字符
-          RELEASE_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.body')
-          CLEAN_BODY=$(echo "$RELEASE_BODY" | tr -d '*' | tr -d '🔍')
-          echo "Cleaned Release body: $CLEAN_BODY"
+          echo "📌 上次 Release 记录的上游 Commit：${PREVIOUS_COMMIT:-未找到}"
 
-          # 同时匹配英文 “Commit:” 和中文 “提交 ID：”
-          PREVIOUS_COMMIT=$(echo "$CLEAN_BODY" \
-            | grep -Eo '(Commit|提交 ID)[:：]\s*[0-9a-f]{40}' \
-            | head -n1 \
-            | awk -F'[:：]' '{print $2}' \
-            | xargs)
-          echo "上次记录的 Commit = $PREVIOUS_COMMIT"
-
-          # 如果未找到上次 Commit，或与最新不同，则触发编译
           if [[ -z "$PREVIOUS_COMMIT" ]]; then
-            echo "⚠️ 未找到上次 Commit，首次编译"
-            echo "new_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
+            echo "⚠️ 未找到 klzgrad 上游记录，执行一次迁移构建"
+            echo "upstream_commit=$LATEST_COMMIT" >> "$GITHUB_OUTPUT"
           elif [[ "$LATEST_COMMIT" != "$PREVIOUS_COMMIT" ]]; then
-            echo "🔄 upstream 有更新，触发编译"
-            echo "new_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
+            echo "🔄 klzgrad naive 有更新，开始构建"
+            echo "upstream_commit=$LATEST_COMMIT" >> "$GITHUB_OUTPUT"
           else
-            echo "✅ 无更新，跳过构建"
-            echo "new_commit=" >> $GITHUB_OUTPUT
-            exit 0
+            echo "✅ klzgrad naive 无更新，本次跳过"
+            echo "upstream_commit=" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: 保存 new_commit
-        run: echo "${{ steps.check.outputs.new_commit }}" > new_commit.txt
-
-      - name: 上传 new_commit.txt
-        uses: actions/upload-artifact@v7
-        with:
-          name: new_commit
-          path: new_commit.txt
 
   build:
-    name: 编译 Caddy（多架构）
+    name: 编译 Caddy（${{ matrix.arch }}）
     needs: check-updates
-    if: ${{ needs.check-updates.outputs.new_commit != '' }}
+    if: ${{ needs.check-updates.outputs.upstream_commit != '' }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         arch: [amd64, arm64]
-    steps:
-      - name: 设置 Go 环境
-        uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
 
-      - name: 克隆 forwardproxy 源码（udpinhttp）
-        run: git clone --branch udpinhttp --depth 1 https://github.com/imgk/forwardproxy.git forwardproxy
+    steps:
+      - name: 检出 mycaddy overlay
+        uses: actions/checkout@v7
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: 拉取指定 klzgrad naive Commit
+        env:
+          UPSTREAM_COMMIT: ${{ needs.check-updates.outputs.upstream_commit }}
+        run: |
+          set -euo pipefail
+          git init forwardproxy
+          git -C forwardproxy remote add origin https://github.com/klzgrad/forwardproxy.git
+          git -C forwardproxy fetch --depth 1 origin "$UPSTREAM_COMMIT"
+          git -C forwardproxy checkout --detach FETCH_HEAD
+
+          ACTUAL_COMMIT="$(git -C forwardproxy rev-parse HEAD)"
+          echo "📌 实际上游 Commit：$ACTUAL_COMMIT"
+          test "$ACTUAL_COMMIT" = "$UPSTREAM_COMMIT"
+
+      - name: 应用 UDP-over-HTTP overlay
+        env:
+          EXPECTED_CADDY_VERSION: ${{ needs.check-updates.outputs.caddy_version }}
+        run: |
+          set -euo pipefail
+
+          ACTUAL_CADDY_VERSION="$(tr -d '\r\n' < forwardproxy/CADDY_VERSION)"
+          echo "📌 klzgrad 指定 Caddy：$ACTUAL_CADDY_VERSION"
+          test "$ACTUAL_CADDY_VERSION" = "$EXPECTED_CADDY_VERSION"
+
+          cp forwardproxy-overlay/udp_over_http.go forwardproxy/
+          cp forwardproxy-overlay/forwardproxy_udp_test.go forwardproxy/
+          python3 scripts/apply-forwardproxy-udp.py forwardproxy/forwardproxy.go
+
+          echo "✅ UDP-over-HTTP overlay 已应用"
+
+      - name: 准备 klzgrad 指定的 Caddy + BBRv1
+        env:
+          CADDY_VERSION: ${{ needs.check-updates.outputs.caddy_version }}
+        run: |
+          set -euo pipefail
+          git init caddy-bbr
+          git -C caddy-bbr remote add origin https://github.com/caddyserver/caddy.git
+          git -C caddy-bbr fetch --depth 1 origin "$CADDY_VERSION"
+          git -C caddy-bbr checkout --detach FETCH_HEAD
+
+          git -C caddy-bbr apply "$GITHUB_WORKSPACE/forwardproxy/caddy-sing-quic-bbrv1.patch"
+          echo "✅ 已应用 klzgrad 的 sing-quic BBRv1 Caddy 补丁"
+
+      - name: 运行 forwardproxy 回归测试
+        working-directory: forwardproxy
+        run: |
+          set -euo pipefail
+
+          # 测试必须和最终二进制使用同一套 patched Caddy / SagerNet QUIC，
+          # 避免 klzgrad 原 go.mod 中旧 Caddy 的 quic-go 与 BBRv1 栈混用。
+          go mod edit -replace=github.com/caddyserver/caddy/v2=../caddy-bbr
+          go mod edit -require=github.com/dunglas/httpsfv@v1.1.0
+          go mod edit -require=github.com/sagernet/quic-go@v0.61.0-sing-box-mod.9
+          go mod tidy
+          go test ./...
 
       - name: 安装 xcaddy
         run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 
-      - name: 编译 Caddy (${{ matrix.arch }})
+      - name: 编译 Caddy（${{ matrix.arch }}）
+        env:
+          CADDY_VERSION: ${{ needs.check-updates.outputs.caddy_version }}
         run: |
-          export GOOS=linux GOARCH=${{ matrix.arch }}
-          xcaddy build --output caddy_${{ matrix.arch }} \
-            --with github.com/caddyserver/jsonc-adapter \
-            --with github.com/mholt/caddy-l4 \
-            --with github.com/caddy-dns/cloudflare \
-            --with github.com/caddy-dns/tencentcloud \
-            --with github.com/caddy-dns/duckdns \
-            --with github.com/mholt/caddy-dynamicdns \
-            --with github.com/mholt/caddy-events-exec \
-            --with github.com/WeidiDeng/caddy-cloudflare-ip \
-            --with github.com/xcaddyplugins/caddy-trusted-cloudfront \
-            --with github.com/mholt/caddy-webdav \
-            --with github.com/caddyserver/forwardproxy@master=./forwardproxy \
-            --with github.com/imgk/caddy-trojan
+          set -euo pipefail
+          export GOOS=linux
+          export GOARCH=${{ matrix.arch }}
 
-      - name: 校验架构并打包
+          "$(go env GOPATH)/bin/xcaddy" build "$CADDY_VERSION"             --output "caddy_${{ matrix.arch }}"             --replace "github.com/caddyserver/caddy/v2=$GITHUB_WORKSPACE/caddy-bbr"             --with "github.com/caddyserver/forwardproxy=$GITHUB_WORKSPACE/forwardproxy"             --with github.com/caddyserver/jsonc-adapter             --with github.com/mholt/caddy-l4             --with github.com/caddy-dns/cloudflare             --with github.com/caddy-dns/tencentcloud             --with github.com/caddy-dns/duckdns             --with github.com/mholt/caddy-dynamicdns             --with github.com/mholt/caddy-events-exec             --with github.com/WeidiDeng/caddy-cloudflare-ip             --with github.com/xcaddyplugins/caddy-trusted-cloudfront             --with github.com/mholt/caddy-webdav             --with github.com/imgk/caddy-trojan
+
+      - name: 校验模块、架构并打包
+        env:
+          UPSTREAM_COMMIT: ${{ needs.check-updates.outputs.upstream_commit }}
+          CADDY_VERSION: ${{ needs.check-updates.outputs.caddy_version }}
         run: |
-          file caddy_${{ matrix.arch }}
-          tar -czf caddy_${{ matrix.arch }}.tar.gz caddy_${{ matrix.arch }}
+          set -euo pipefail
+
+          file "caddy_${{ matrix.arch }}"
+          go version -m "caddy_${{ matrix.arch }}" | tee "buildmeta_${{ matrix.arch }}.txt"
+
+          if [[ "${{ matrix.arch }}" == "amd64" ]]; then
+            "./caddy_${{ matrix.arch }}" list-modules | tee "modules_${{ matrix.arch }}.txt"
+            grep -qx 'http.handlers.forward_proxy' "modules_${{ matrix.arch }}.txt"
+            grep -qx 'layer4' "modules_${{ matrix.arch }}.txt"
+            grep -qx 'caddy.listeners.layer4' "modules_${{ matrix.arch }}.txt"
+          else
+            # x86 Runner 不能直接执行 arm64 二进制；改用 Go build info
+            # 验证关键模块已实际链接进最终产物。
+            grep -q 'github.com/caddyserver/forwardproxy' "buildmeta_${{ matrix.arch }}.txt"
+            grep -q 'github.com/mholt/caddy-l4' "buildmeta_${{ matrix.arch }}.txt"
+            cp "buildmeta_${{ matrix.arch }}.txt" "modules_${{ matrix.arch }}.txt"
+          fi
+
+          cat > "build-info_${{ matrix.arch }}.txt" <<EOF
+          klzgrad/forwardproxy branch: naive
+          klzgrad/forwardproxy commit: $UPSTREAM_COMMIT
+          Caddy version: $CADDY_VERSION
+          UDP-over-HTTP source: imgk/forwardproxy@6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
+          QUIC stack: github.com/sagernet/quic-go
+          EOF
+
+          tar -czf "caddy_${{ matrix.arch }}.tar.gz"             "caddy_${{ matrix.arch }}"             "build-info_${{ matrix.arch }}.txt"
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: caddy-${{ matrix.arch }}
-          path: caddy_${{ matrix.arch }}.tar.gz
+          path: |
+            caddy_${{ matrix.arch }}.tar.gz
+            modules_${{ matrix.arch }}.txt
 
   release:
     name: 发布 Release
-    needs: build
+    needs: [check-updates, build]
+    if: ${{ github.ref == 'refs/heads/main' && needs.check-updates.outputs.upstream_commit != '' }}
     runs-on: ubuntu-latest
     steps:
-      - name: 下载 new_commit.txt
-        uses: actions/download-artifact@v4
-        with:
-          name: new_commit
-          path: .
-
-      - name: 解析 Commit ID
-        id: get_commit
-        run: |
-          RAW=$(cat new_commit.txt)
-          if [[ "$RAW" == "forced" ]]; then
-            RAW=$(curl -s https://api.github.com/repos/imgk/forwardproxy/commits/udpinhttp | jq -r '.sha')
-          fi
-          echo "Commit ID: $RAW"
-          echo "COMMIT=$RAW" >> $GITHUB_ENV
-
       - name: 下载 amd64 包
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: caddy-amd64
-          path: .
+          path: release
 
       - name: 下载 arm64 包
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: caddy-arm64
-          path: .
+          path: release
 
-      - name: 获取 Caddy 官方最新版本
-        id: get_caddy_version
+      - name: 生成发布信息
+        env:
+          CADDY_VERSION: ${{ needs.check-updates.outputs.caddy_version }}
+          UPSTREAM_COMMIT: ${{ needs.check-updates.outputs.upstream_commit }}
         run: |
-          VER=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest \
-            | jq -r '.tag_name' | sed 's/^v//')
-          echo "CADDY_VERSION=$VER" >> $GITHUB_ENV
+          set -euo pipefail
+          VERSION_NO_V="${CADDY_VERSION#v}"
+          TAG="v${VERSION_NO_V}-$(date -u +'%Y%m%d-%H%M%S')"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
 
-      - name: 生成 发布 Tag
-        run: |
-          TAG="v${{ env.CADDY_VERSION }}-$(date +'%Y%m%d-%H%M%S')"
-          echo "TAG=$TAG" >> $GITHUB_ENV
+          cat > release_notes.md <<EOF
+          🚀 **NaiveProxy Caddy — $TAG**
 
-      - name: 生成 发布说明
-        run: |
-          cat <<EOF > release_notes.md
-          🚀 **NaiveProxy Caddy 发布版本 — ${{ env.TAG }}**
+          ## 核心来源
+          - klzgrad/forwardproxy 分支：`naive`
+          - 上游提交：$UPSTREAM_COMMIT
+          - Caddy：$CADDY_VERSION
+          - QUIC：SagerNet quic-go + klzgrad sing-quic BBRv1
+          - UDP-over-HTTP：基于 `imgk/forwardproxy@6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec` 的独立 overlay
 
-          [![GitHub Release](https://img.shields.io/github/v/release/wekingchen/mycaddy?style=flat-square&logo=github)]
-          [![Build Status](https://img.shields.io/github/actions/workflow/status/wekingchen/mycaddy/build-caddy.yml?style=flat-square&logo=github-actions)]
+          ## UDP-over-HTTP
+          - RFC 9298 CONNECT-UDP
+          - HTTP/1.1 / HTTP/2 流式 UDP
+          - HTTP/3 Datagram
+          - CONNECT-UDP-BIND（保持 imgk 原实现能力）
 
-          ## 🧩 内置插件集
-          | 插件名称                    | 功能描述                            |
-          |-----------------------------|-------------------------------------|
-          | forwardproxy                | NaïveProxy 代理支持（udpinhttp）    |
-          | jsonc-adapter               | 支持保留注释的 JSONC 配置           |
-          | caddy-l4                    | TCP/UDP 第四层代理                  |
-          | caddy-dns/cloudflare        | Cloudflare DNS 解析                 |
-          | caddy-dns/tencentcloud      | 腾讯云 DNS 解析                     |
-          | caddy-dns/duckdns           | DuckDNS 动态域名解析                |
-          | caddy-dynamicdns            | 动态 DNS 更新                       |
-          | caddy-events-exec           | 事件触发自动化执行                  |
-          | caddy-cloudflare-ip         | Cloudflare IP 优选                  |
-          | caddy-trusted-cloudfront    | CloudFront 可信代理支持             |
-          | caddy-webdav                | WebDAV 文件服务器                   |
-          | caddy-trojan                | Trojan 协议支持                     |
+          ## 其他内置插件
+          - jsonc-adapter
+          - caddy-l4
+          - Cloudflare / Tencent Cloud / DuckDNS
+          - caddy-dynamicdns
+          - caddy-events-exec
+          - caddy-cloudflare-ip
+          - caddy-trusted-cloudfront
+          - caddy-webdav
+          - caddy-trojan
 
-          ## ⚡ 构建特性
-          - **自动同步**：每日 UTC 16:00（北京时间 00:00）检测 upstream 更新
-          - **智能触发**：仅在上游代码变更或手动触发时编译
-          - **双架构输出**：同时生成 \`amd64\` & \`arm64\`
-          - **自动打包**：压缩为 \`caddy_amd64.tar.gz\`、\`caddy_arm64.tar.gz\` 并上传 Release
-
-          🔍 **提交 ID：** ${{ env.COMMIT }}
-
-          📥 **下载二进制包：**
-          - \`caddy_amd64.tar.gz\`
-          - \`caddy_arm64.tar.gz\`
+          ## 构建策略
+          每日检查 `klzgrad/forwardproxy:naive`。检测到新提交后，直接以最新上游为底座重新应用 UDP overlay；若上游结构变化造成 overlay 无法安全应用，构建会明确失败，不会静默停留在旧源码。
           EOF
 
-      - name: 创建 GitHub Release 并上传二进制包
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ env.TAG }}
-          name: "NaiveProxy Caddy ${{ env.TAG }}"
-          bodyFile: release_notes.md
-          artifacts: |
-            caddy_amd64.tar.gz
-            caddy_arm64.tar.gz
+      - name: 创建 GitHub Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG"             --repo "$GITHUB_REPOSITORY"             --title "NaiveProxy Caddy $TAG"             --notes-file release_notes.md             release/caddy_amd64.tar.gz             release/caddy_arm64.tar.gz
