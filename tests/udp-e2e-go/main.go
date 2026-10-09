@@ -21,7 +21,8 @@ import (
 	"golang.org/x/net/http2/hpack"
 )
 
-var payload = []byte("mycaddy-release-real-udp-e2e")\nvar activeLogPath string
+var payload = []byte("mycaddy-release-real-udp-e2e")
+var activeLogPath string
 
 func fail(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "E2E_FAIL: "+format+"\n", args...)
@@ -344,7 +345,8 @@ func main() {
 		fail("temp dir: %v", err)
 	}
 	defer os.RemoveAll(dir)
-	cmd, logf := startCaddy(caddy, dir, httpsPort, udpPort)\n\tactiveLogPath = filepath.Join(dir, "caddy.log")
+	cmd, logf := startCaddy(caddy, dir, httpsPort, udpPort)
+	activeLogPath = filepath.Join(dir, "caddy.log")
 	defer func() {
 		stopCaddy(cmd, logf)
 		if b, err := os.ReadFile(filepath.Join(dir, "caddy.log")); err == nil {
