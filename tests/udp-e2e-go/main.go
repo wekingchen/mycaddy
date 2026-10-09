@@ -26,6 +26,11 @@ var activeLogPath string
 
 func fail(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "E2E_FAIL: "+format+"\n", args...)
+	if activeLogPath != "" {
+		if b, err := os.ReadFile(activeLogPath); err == nil {
+			fmt.Fprintf(os.Stderr, "--- Caddy log ---\n%s\n", b)
+		}
+	}
 	os.Exit(1)
 }
 
