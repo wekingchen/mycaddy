@@ -118,16 +118,22 @@ jobs:
           PY
 
       - name: HTTP/1.1 CONNECT-UDP → UDP Echo
+        id: h1
+        continue-on-error: true
         run: |
           set -euo pipefail
           python3 tests/release-udp-e2e.py --protocol h1 --port 18080
 
       - name: HTTP/2 Extended CONNECT-UDP → UDP Echo
+        id: h2
+        continue-on-error: true
         run: |
           set -euo pipefail
           python3 tests/release-udp-e2e.py --protocol h2 --host localhost --port 18443
 
       - name: HTTP/3 CONNECT-UDP Datagram → UDP Echo
+        id: h3
+        continue-on-error: true
         run: |
           set -euo pipefail
           mkdir -p /tmp/h3-e2e
@@ -138,6 +144,8 @@ jobs:
           go run . localhost:18443 127.0.0.1:19090
 
       - name: 官方 NaiveProxy 客户端真实 QUIC/CONNECT-UDP 链路
+        id: naive
+        continue-on-error: true
         run: |
           set -euo pipefail
           kill "$(cat /tmp/direct-caddy.pid)" || true
@@ -228,6 +236,19 @@ jobs:
           kill "$CHAIN_CADDY_PID" "$ORIGIN_PID" || true
           wait "$CHAIN_CADDY_PID" 2>/dev/null || true
           wait "$ORIGIN_PID" 2>/dev/null || true
+
+
+      - name: 最终判定
+        if: always()
+        run: |
+          echo "H1=${{ steps.h1.outcome }}"
+          echo "H2=${{ steps.h2.outcome }}"
+          echo "H3=${{ steps.h3.outcome }}"
+          echo "NAIVE=${{ steps.naive.outcome }}"
+          test "${{ steps.h1.outcome }}" = success
+          test "${{ steps.h2.outcome }}" = success
+          test "${{ steps.h3.outcome }}" = success
+          test "${{ steps.naive.outcome }}" = success
 
       - name: 汇总三协议真实 UDP 记录
         if: always()
