@@ -31,32 +31,52 @@ TARGET_PORT=19110
 TMP="$(mktemp -d -t mycaddy-naive-e2e-XXXXXX)"
 CADDY_PID=""
 NAIVE_PID=""
-HTTP_PID=""
+ECHO_PID=""
 
 cleanup() {
   set +e
   [[ -n "$NAIVE_PID" ]] && kill "$NAIVE_PID" 2>/dev/null
   [[ -n "$CADDY_PID" ]] && kill "$CADDY_PID" 2>/dev/null
-  [[ -n "$HTTP_PID" ]] && kill "$HTTP_PID" 2>/dev/null
+  [[ -n "$ECHO_PID" ]] && kill "$ECHO_PID" 2>/dev/null
   [[ -n "$NAIVE_PID" ]] && wait "$NAIVE_PID" 2>/dev/null
   [[ -n "$CADDY_PID" ]] && wait "$CADDY_PID" 2>/dev/null
-  [[ -n "$HTTP_PID" ]] && wait "$HTTP_PID" 2>/dev/null
-  if [[ -f "$TMP/caddy.log" ]]; then
-    echo "--- Caddy $MODE log ---"
-    cat "$TMP/caddy.log"
-  fi
-  if [[ -f "$TMP/naive.log" ]]; then
-    echo "--- Official naive $MODE log ---"
-    cat "$TMP/naive.log"
-  fi
+  [[ -n "$ECHO_PID" ]] && wait "$ECHO_PID" 2>/dev/null
+  echo "--- Caddy $MODE log ---"
+  cat "$TMP/caddy.log" 2>/dev/null || true
+  echo "--- Official naive $MODE log ---"
+  cat "$TMP/naive.log" 2>/dev/null || true
+  echo "--- TCP echo $MODE log ---"
+  cat "$TMP/echo.log" 2>/dev/null || true
   rm -rf "$TMP"
 }
 trap cleanup EXIT
 
-mkdir -p "$TMP/www" "$TMP/data" "$TMP/config"
-printf 'official-naive-%s-e2e\n' "$MODE" > "$TMP/www/index.html"
-python3 -m http.server "$TARGET_PORT" --bind 127.0.0.1 --directory "$TMP/www" >"$TMP/http.log" 2>&1 &
-HTTP_PID=$!
+mkdir -p "$TMP/data" "$TMP/config"
+
+python3 - "$TARGET_PORT" >"$TMP/echo.log" 2>&1 <<'PY' &
+import socket, sys
+port = int(sys.argv[1])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", port))
+    srv.listen(1)
+    print("ECHO_READY", flush=True)
+    conn, addr = srv.accept()
+    with conn:
+        conn.settimeout(15)
+        data = conn.recv(65535)
+        print("ECHO_RX=" + data.decode("utf-8", "replace"), flush=True)
+        conn.sendall(data)
+        print("ECHO_TX=" + data.decode("utf-8", "replace"), flush=True)
+PY
+ECHO_PID=$!
+
+for _ in $(seq 1 100); do
+  grep -q '^ECHO_READY$' "$TMP/echo.log" 2>/dev/null && break
+  kill -0 "$ECHO_PID" 2>/dev/null || { cat "$TMP/echo.log"; exit 1; }
+  sleep 0.1
+done
+grep -q '^ECHO_READY$' "$TMP/echo.log"
 
 cat >"$TMP/Caddyfile" <<EOF
 {
@@ -116,35 +136,76 @@ SSL_CERT_FILE="$ROOT_CERT" \
   --log="$TMP/naive.log" &
 NAIVE_PID=$!
 
-python3 - "$SOCKS_PORT" "$NAIVE_PID" <<'PY'
-import os, socket, sys, time
-port = int(sys.argv[1])
-pid = int(sys.argv[2])
+python3 - "$SOCKS_PORT" "$TARGET_PORT" "$MODE" "$NAIVE_PID" <<'PY'
+import os, socket, struct, sys, time
+
+socks_port = int(sys.argv[1])
+target_port = int(sys.argv[2])
+mode = sys.argv[3]
+pid = int(sys.argv[4])
+payload = f"official-naive-{mode}-tcp-e2e".encode()
+
 deadline = time.time() + 15
+sock = None
 while time.time() < deadline:
     try:
         os.kill(pid, 0)
     except OSError:
         raise SystemExit("naive exited before SOCKS listener became ready")
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=.3):
-            break
+        sock = socket.create_connection(("127.0.0.1", socks_port), timeout=.5)
+        break
     except OSError:
         time.sleep(.15)
-else:
+if sock is None:
     raise SystemExit("naive SOCKS listener did not become ready")
+
+with sock:
+    sock.settimeout(15)
+    sock.sendall(b"\x05\x01\x00")
+    reply = sock.recv(2)
+    if reply != b"\x05\x00":
+        raise SystemExit(f"SOCKS greeting failed: {reply.hex()}")
+
+    req = b"\x05\x01\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack("!H", target_port)
+    sock.sendall(req)
+
+    head = sock.recv(4)
+    if len(head) != 4 or head[0] != 5 or head[1] != 0:
+        raise SystemExit(f"SOCKS CONNECT failed: {head.hex()}")
+    atyp = head[3]
+    if atyp == 1:
+        need = 4 + 2
+    elif atyp == 4:
+        need = 16 + 2
+    elif atyp == 3:
+        n = sock.recv(1)
+        if len(n) != 1:
+            raise SystemExit("SOCKS CONNECT truncated domain length")
+        need = n[0] + 2
+    else:
+        raise SystemExit(f"SOCKS CONNECT bad ATYP: {atyp}")
+    rest = b""
+    while len(rest) < need:
+        part = sock.recv(need - len(rest))
+        if not part:
+            raise SystemExit("SOCKS CONNECT truncated reply")
+        rest += part
+
+    sock.sendall(payload)
+    got = b""
+    while len(got) < len(payload):
+        part = sock.recv(len(payload) - len(got))
+        if not part:
+            raise SystemExit("official naive tunnel closed before echo")
+        got += part
+    if got != payload:
+        raise SystemExit(f"official naive payload mismatch: sent={payload!r} got={got!r}")
+
+print(f"OFFICIAL_NAIVE_{mode.upper()}_TUNNEL=PASS")
+print("OFFICIAL_NAIVE_PAYLOAD=" + payload.decode())
 PY
 
-RESULT="$(curl --fail --silent --show-error --max-time 10 \
-  --socks5-hostname "127.0.0.1:$SOCKS_PORT" \
-  "http://127.0.0.1:$TARGET_PORT/")"
-
-EXPECTED="official-naive-$MODE-e2e"
-if [[ "$RESULT" != "$EXPECTED" ]]; then
-  echo "official naive payload mismatch: expected=$EXPECTED got=$RESULT" >&2
-  exit 1
-fi
-
-MODE_UPPER="$(printf '%s' "$MODE" | tr '[:lower:]' '[:upper:]')"
-echo "OFFICIAL_NAIVE_"$MODE_UPPER"_TUNNEL=PASS"
-echo "OFFICIAL_NAIVE_"$MODE_UPPER"_PAYLOAD=$RESULT"
+wait "$ECHO_PID"
+grep -q "ECHO_RX=official-naive-$MODE-tcp-e2e" "$TMP/echo.log"
+grep -q "ECHO_TX=official-naive-$MODE-tcp-e2e" "$TMP/echo.log"
