@@ -69,7 +69,10 @@ SagerNet `http3` 当前没有导出原版 quic-go 的 `ParseCapsule`，所以 ov
 
 HTTP/2 Extended CONNECT **不能**像 HTTP/1.1 一样 Hijack 底层 TCP 连接；当前实现通过 HTTP/2 的请求 Body + ResponseWriter 传输双向 Capsule，并在需要时 Flush。Go 的 HTTP/2 Extended CONNECT 必须在服务端启用 RFC 8441（`GODEBUG=http2xconnect=1`）。
 
-HTTP/3 的 CONNECT-UDP 依赖**两层**支持：QUIC 传输的 `EnableDatagrams` 以及 HTTP/3 Server 的 `EnableDatagrams`。缺一不可，所以 `scripts/apply-caddy-http3-datagrams.py` 必须在 klzgrad 的 BBRv1 补丁后执行。该脚本还将 QUIC 初始包大小设置为 **1452 字节**，供官方 NaiveProxy 客户端在典型 1500-MTU 链路上进行双层 QUIC 测试。对于路径 MTU 更低的网络不能保证兼容，必须另行验证。
+HTTP/3 的 CONNECT-UDP 依赖**两层**支持：QUIC 传输的 `EnableDatagrams` 与 HTTP/3 Server 的 `EnableDatagrams`。缺一不可，所以 `scripts/apply-caddy-http3-datagrams.py` 必须在 klzgrad 的 BBRv1 补丁后执行。
+
+双层 QUIC 的外层包必须大到能容纳内层 QUIC，但不能把**内外层**都盲目调大。补丁保持 Caddy 默认的 **1200 字节**不变，提供按进程配置的 `MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452` 供**外层**代理使用，内层仍使用默认 1200 字节。该数值针对常见 1500 MTU 网络；低 MTU 路径必须另行验证。
+
 
 不满足这些条件，代码即使编译成功、模块齐全，也会在真实流量测试中失败。本项目将这些测试加入了正式发布前的验收标准。
 
