@@ -625,6 +625,25 @@ func (rm RequestMatcher) Extract(input string) (map[string]string, error) {
 	return result, nil
 }
 
+type http2Stream struct {
+	r io.Reader
+	w http.ResponseWriter
+}
+
+func (s *http2Stream) Read(p []byte) (int, error) {
+	return s.r.Read(p)
+}
+
+func (s *http2Stream) Write(p []byte) (int, error) {
+	n, err := s.w.Write(p)
+	if err == nil {
+		if flusher, ok := s.w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+	return n, err
+}
+
 type DatagramSender struct {
 	sync.Mutex
 	w io.Writer
@@ -1067,13 +1086,11 @@ func (h Handler) tryUDPoverHTTP(w http.ResponseWriter, r *http.Request) (bool, e
 			return true, caddyhttp.Error(http.StatusInternalServerError, fmt.Errorf("ResponseWriter flush error: %v", err))
 		}
 
-		conn, _, err := rc.Hijack()
-		if err != nil {
-			return true, err
-		}
-		defer conn.Close()
-
-		return true, h.udpProxyServer.HandleStream(conn, req, rconn)
+		// HTTP/2 streams cannot be hijacked from net/http. Use the request body
+		// and ResponseWriter as the bidirectional stream instead. HTTP/2 permits
+		// concurrent request-body reads and response writes.
+		stream := &http2Stream{r: r.Body, w: w}
+		return true, h.udpProxyServer.HandleStream(stream, req, rconn)
 	case 3:
 		// slog.Info(fmt.Sprintf("handle UDP over HTTP/3.0 request: ---> %s", req))
 
