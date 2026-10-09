@@ -3,7 +3,11 @@
 
 Caddy creates the QUIC listener itself, so RFC 9297 / RFC 9298 needs both:
 1. QUIC transport datagrams (quic.Config.EnableDatagrams)
-2. HTTP/3 datagram SETTINGS (http3.Server.EnableDatagrams)\n3. Sufficient packet capacity for NaiveProxy nested QUIC: 1200-byte outer\n   QUIC packets only allow ~1163 bytes of HTTP Datagrams, too small for\n   inner QUIC handshake packets. A 1452-byte outer packet supports a\n   typical 1500-MTU path; reduced-MTU paths need separate consideration.
+2. HTTP/3 datagram SETTINGS (http3.Server.EnableDatagrams)\n3. Per-process QUIC packet sizing for nested QUIC: the default stays 1200
+   bytes. An explicitly configured outer MASQUE proxy can set
+   MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452 (only on common 1500-MTU paths).
+   Inner servers must keep smaller packets; raising both sides globally
+   makes nesting impossible for large QUIC Initial messages.
 
 The replacements are strict so an upstream layout change fails the build rather
 than silently producing a Caddy that advertises UDP-over-HTTP but cannot use H3.
@@ -30,17 +34,32 @@ def main() -> int:
     listeners = root / "listeners.go"
     replace_once(
         listeners,
-        """			&quic.Config{
-				InitialPacketSize: 1200,
-				Allow0RTT:         allow0rtt,
-				Tracer:            h3qlog.DefaultConnectionTracer,
-			},""",
-        """			&quic.Config{
-				InitialPacketSize: 1452,
-				Allow0RTT:         allow0rtt,
-				EnableDatagrams:   true,
-				Tracer:            h3qlog.DefaultConnectionTracer,
-			},""",
+        """\t\tearlyLn, err := tr.ListenEarly(
+\t\t\thttp3.ConfigureTLSConfig(quicTlsConfig),
+\t\t\t&quic.Config{
+\t\t\t\tInitialPacketSize: 1200,
+\t\t\t\tAllow0RTT:         allow0rtt,
+\t\t\t\tTracer:            h3qlog.DefaultConnectionTracer,
+\t\t\t},""",
+        """\t\t// Preserve Caddy's conservative default for low-MTU networks and inner QUIC
+\t\t// servers. Only an explicitly configured outer MASQUE proxy needs larger
+\t\t// packets to transport complete inner QUIC Initial packets in H3 Datagrams.
+\t\tquicInitialPacketSize := uint16(1200)
+\t\tif raw := os.Getenv("MYCADDY_QUIC_INITIAL_PACKET_SIZE"); raw != "" {
+\t\t\tparsed, err := strconv.ParseUint(raw, 10, 16)
+\t\t\tif err != nil || parsed < 1200 || parsed > 1452 {
+\t\t\t\treturn nil, fmt.Errorf("MYCADDY_QUIC_INITIAL_PACKET_SIZE must be in [1200,1452] (got %q)", raw)
+\t\t\t}
+\t\t\tquicInitialPacketSize = uint16(parsed)
+\t\t}
+\t\tearlyLn, err := tr.ListenEarly(
+\t\t\thttp3.ConfigureTLSConfig(quicTlsConfig),
+\t\t\t&quic.Config{
+\t\t\t\tInitialPacketSize: quicInitialPacketSize,
+\t\t\t\tAllow0RTT:         allow0rtt,
+\t\t\t\tEnableDatagrams:   true,
+\t\t\t\tTracer:            h3qlog.DefaultConnectionTracer,
+\t\t\t},""",
     )
 
     server = root / "modules" / "caddyhttp" / "server.go"
@@ -57,7 +76,7 @@ def main() -> int:
 			EnableDatagrams: true,""",
     )
 
-    print("Enabled QUIC + HTTP/3 Datagrams, 1452-byte initial QUIC packet for nested QUIC")
+    print("Enabled HTTP/3 Datagrams and optional per-process QUIC packet size (default 1200)")
     return 0
 
 
