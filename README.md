@@ -19,12 +19,11 @@ klzgrad/forwardproxy:naive
         ▼
 对应版本 Caddy + SagerNet quic-go / sing-quic BBRv1
         │
-        ├─ 启用 QUIC + HTTP/3 Datagram
         ├─ 应用本仓库 UDP-over-HTTP overlay
+        ├─ 启用 Caddy HTTP/3 Datagram 与嵌套 QUIC MTU 适配
         ├─ 运行 forwardproxy 回归测试
         ├─ 加入全部自定义 Caddy 插件
-        ├─ 构建 linux/amd64 + linux/arm64
-        └─ amd64 实跑 H1 / H2 / H3 UDP Echo E2E
+        └─ 构建 linux/amd64 + linux/arm64
 ```
 
 这里刻意**不长期 fork klzgrad 的完整 forwardproxy 源码**。每次构建都重新拉取 `naive` 最新提交，再把本仓库维护的 UDP 增量叠加上去。
@@ -41,7 +40,7 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 "add UDP in HTTP"
 ```
 
-为兼容 klzgrad 当前的 Caddy BBRv1 方案，overlay 已从原版 `quic-go` 适配到 `github.com/sagernet/quic-go`。此外，Caddy 自己创建 QUIC/HTTP3 listener 时默认没有为本功能开启 Datagram，因此构建阶段会通过 `scripts/apply-caddy-http3-datagrams.py` 同时开启 QUIC Datagram 与 HTTP/3 Datagram SETTINGS；脚本使用严格锚点，Caddy 上游结构变化时会主动失败，避免静默产出“有代码但 H3 实际不可用”的二进制。
+为兼容 klzgrad 当前的 Caddy BBRv1 方案，overlay 已从原版 `quic-go` 适配到 `github.com/sagernet/quic-go`。
 
 当前支持情况：
 
@@ -57,6 +56,34 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 | 自定义 `udp_uri_template` | ✅ |
 
 注意：当 `forward_proxy` 配置了 `upstream` 时，当前 UDP-over-HTTP overlay 不接管该请求。
+
+### HTTP/2 Extended CONNECT 的运行环境
+
+Caddy 当前使用的 `golang.org/x/net/http2` 默认没有开启 RFC 8441 Extended CONNECT。需要在**启动 Caddy 之前**设置 `GODEBUG=http2xconnect=1`，否则普通 HTTP/2 CONNECT-UDP 请求可能被 HTTP/2 协议层拒绝：
+
+```bash
+GODEBUG=http2xconnect=1 ./caddy_amd64 run --config Caddyfile
+```
+
+systemd 部署时可以设置 `Environment=GODEBUG=http2xconnect=1`。这只用于启用 HTTP/2 Extended CONNECT；HTTP/1.1 和 HTTP/3 不依赖该开关。测试工作流对 H2 也显式设置此环境，避免把受限配置误判成协议代码故障。
+
+### QUIC 的 MTU 限制与双层代理配置
+
+NaiveProxy 的双层 QUIC 需要让**外层 HTTP/3 Datagram**承载**内层 QUIC 数据包**。把所有 Caddy 的 QUIC 初始包一起调大不是正确办法：内层也会发出更大的包，外层仍装不下。
+
+因此本项目默认保留 Caddy 原本的 **1200 字节**，只允许在**外层代理的 Caddy 进程**显式设置 `MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452`（面向常见 1500 MTU 网络）：
+
+```bash
+# 外层代理进程（负责 CONNECT-UDP 封装）
+MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452 ./caddy_amd64 run --config outer.Caddyfile
+
+# 内层代理进程（保持默认 1200）
+./caddy_amd64 run --config inner.Caddyfile
+```
+
+两层可以使用**同一份 Caddy 二进制**，但在同一主机测试时采用独立进程；通常实际部署时它们位于不同服务器。只有外层需要调整，内层不需要。该参数只接受 1200–1452 的整数值，非法数值会使启动失败，避免无意改变系统默认行为。
+
+**注意：**低 MTU 网络（例如某些 VPN、移动网络）不一定能承载 1452 字节的外层 QUIC 包。此方案针对典型 1500 MTU 的链路，实际网络仍需验证，不承诺所有路径均无分片。官方 NaiveProxy E2E 会检查是否发生 `DATAGRAM frame too large` 和内层首次握手超时。
 
 ## 内置插件
 
@@ -88,13 +115,13 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 3. 如果上游 Commit 与最新 Release 已记录的 Commit 相同，则定时任务跳过构建。
 4. 如果上游更新，重新拉取最新源码。
 5. 应用本仓库 UDP-over-HTTP overlay。
-6. 拉取 klzgrad 指定版本的 Caddy，应用上游 `caddy-sing-quic-bbrv1.patch`，并开启 QUIC + HTTP/3 Datagram。
+6. 拉取 klzgrad 指定版本的 Caddy，应用上游 `caddy-sing-quic-bbrv1.patch`，再启用 HTTP/3 Datagram 与嵌套 QUIC MTU 适配。
 7. 在 patched Caddy + SagerNet QUIC 环境下运行 `go test ./...`。
 8. 使用 xcaddy 加入全部插件，分别编译 `linux/amd64` 和 `linux/arm64`。
-9. 对最终二进制做插件、模块、架构和 UDP 特征校验。
-10. 对最终 `caddy_amd64` 依次运行 HTTP/1.1 Upgrade、HTTP/2 Extended CONNECT、HTTP/3 Datagram 三组真实 UDP Echo E2E；每组都必须实际发包、Echo Server 收包并原样回包。
-11. 两个架构构建和三协议 E2E 全部成功后才允许主分支发布 Release。
-12. Release 发布后，`.github/workflows/release-udp-e2e.yml` 会再次直接下载该 Release 的原始 `caddy_amd64.tar.gz`，对发布产物重跑 H1/H2/H3 E2E，不重新编译 Caddy。
+9. 对最终二进制做功能校验。
+10. 用最终 amd64 Caddy 二进制独立验证 HTTP/1.1、HTTP/2、HTTP/3 三种 UDP Echo 往返，逐字节比较收发内容。
+11. 用官方 NaiveProxy 客户端验证单层 H2、单层 H3 和双层 QUIC-over-CONNECT-UDP，检查真实 UDP 收发与大包异常。
+12. 两个架构和全部 E2E 通过后才允许发布 Release。
 
 手动运行时可使用 `force_build=true` 强制重新构建当前上游版本。
 
@@ -109,9 +136,7 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 - 所有自定义插件是否出现在 Go build info 中；
 - UDP-over-HTTP 的关键协议/配置特征是否实际存在于最终二进制；
 - amd64 额外直接执行 `caddy list-modules`，逐项检查所有关键 Caddy module；
-- arm64 因 GitHub Ubuntu Runner 为 x86_64，不能直接执行 ARM64 ELF，因此使用静态 build info 做跨架构校验；
-- amd64 必须用最终 ELF 实际跑通 HTTP/1.1、HTTP/2、HTTP/3 三种 CONNECT-UDP 数据路径，UDP Echo payload 必须逐字节一致；
-- 新 Release 发布后，再对从 Releases 下载回来的原始 amd64 压缩包执行同一组三协议 E2E。
+- arm64 因 GitHub Ubuntu Runner 为 x86_64，不能直接执行 ARM64 ELF，因此使用静态 build info 做跨架构校验。
 
 UDP-over-HTTP 检查的关键特征包括：
 
@@ -123,9 +148,26 @@ Connect-Udp-Bind
 connect-udp-bind over http3 is not supported yet
 ```
 
-这意味着 UDP overlay 如果没有真正进入最终二进制，构建会直接失败，不会继续发布 Release。静态特征只能证明代码被链接，真正的可用性由三协议 UDP Echo E2E 负责兜底。
+这意味着 UDP overlay 如果没有真正进入最终二进制，构建会直接失败，不会继续发布 Release。
 
-HTTP/2 的数据通道使用请求体读取 + ResponseWriter 写回的双向 HTTP/2 stream，不再尝试 `Hijack`（HTTP/2 的 net/http ResponseWriter 不支持 Hijack）。HTTP/3 则要求 QUIC transport 和 HTTP/3 SETTINGS 两层都协商 Datagram。
+此外，amd64 会运行 `tests/udp-over-http-e2e.py`、`tests/udp-e2e-go/` 以及官方 NaiveProxy 的端到端测试。这些测试均启动**最终构建出来的 Caddy 可执行文件**和真实网络 socket，不调用 forwardproxy 内部函数：
+
+```text
+测试客户端
+  │ HTTP/1.1 Upgrade: connect-udp
+  ▼
+最终 caddy_amd64
+  │ UDP
+  ▼
+127.0.0.1 UDP Echo Server
+  │ 原样回包
+  ▼
+最终 caddy_amd64 → 测试客户端
+```
+
+HTTP/1.1 测试必须收到 `101 Switching Protocols`；HTTP/2 必须完成 Extended CONNECT，HTTP/3 必须协商 HTTP Datagram。每一种协议都要求 UDP Echo Server 实际收到 payload，回包后客户端收到完全相同的内容。
+
+官方 NaiveProxy 客户端使用固定版本 `v154.0.8037.49-4` 进行实际 HTTP/2、HTTP/3 单层代理测试和两跳 QUIC 代理测试。两跳测试要求：**外层 QUIC → HTTP/3 CONNECT-UDP → 内层 QUIC → TCP 目标服务器**，并检查 Datagram 收发和握手是否出现尺寸限制。
 
 ## 下载与使用
 
@@ -188,10 +230,10 @@ python3 scripts/apply-forwardproxy-udp.py forwardproxy/forwardproxy.go
 # 4. 读取 klzgrad 指定 Caddy 版本
 CADDY_VERSION="$(tr -d '\r\n' < forwardproxy/CADDY_VERSION)"
 
-# 5. 拉取对应 Caddy，应用 klzgrad BBRv1 补丁，并开启 HTTP/3 Datagram
+# 5. 拉取对应 Caddy，并应用 klzgrad BBRv1 补丁
 git clone --depth 1 --branch "$CADDY_VERSION" https://github.com/caddyserver/caddy.git caddy-bbr
 git -C caddy-bbr apply "$PWD/forwardproxy/caddy-sing-quic-bbrv1.patch"
-python3 scripts/apply-caddy-http3-datagrams.py "$PWD/caddy-bbr"
+python3 scripts/apply-caddy-http3-datagrams.py caddy-bbr
 
 # 6. 用最终依赖环境测试 forwardproxy
 cd forwardproxy
@@ -218,12 +260,14 @@ go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 
 ## 当前验证状态
 
-2026-10-09 的真实网络验证发现并修复了两个此前仅靠“编译成功/二进制特征存在”无法发现的问题：
+截至 2026-10-09，已直接运行最终编译出来的 amd64 Caddy，可复查的证据包括：
 
-- 正式 Release `v2.11.7-20261009-002817`：HTTP/1.1 UDP Echo 真实往返通过；HTTP/2 因旧实现尝试 Hijack HTTP/2 stream 而失败；HTTP/3 因 Caddy 未协商 Datagram 而失败。
-- 修复候选构建 GitHub Actions #37873089934：amd64 的 HTTP/1.1、HTTP/2、HTTP/3 三条真实 UDP Echo 数据路径全部通过；arm64 同轮构建成功。
-- HTTP/3 CONNECT-UDP-BIND 仍未实现，本次修复没有改变这一限制。
+- [候选构建 #37876720043](https://github.com/wekingchen/mycaddy/actions/runs/37876720043)：amd64、arm64 编译及现有模块/回归校验通过。
+- [三协议及官方客户端验收 #37877756536](https://github.com/wekingchen/mycaddy/actions/runs/37877756536)：HTTP/1.1、HTTP/2、HTTP/3 的真实 UDP Echo 均通过；官方 NaiveProxy 单层 H2/H3 及双层 QUIC-over-CONNECT-UDP 验证通过。
+- [双层 QUIC 诊断 #37876818236](https://github.com/wekingchen/mycaddy/actions/runs/37876818236)：外层较大 QUIC 包、内层默认 1200 字节的独立 Caddy 进程建立连接成功，检查到真实 UDP 双向转发，未见 `DATAGRAM frame too large` 或首次 QUIC 握手超时。
 
-因此从本次修复开始，项目不再把“UDP 代码进入二进制”当作可用性结论：**正式发布的前置门槛是候选二进制三协议 E2E 全绿；发布后还要再从 Release 下载原始产物做一次三协议 E2E。**
+正式构建的 amd64 Job 现在也直接运行官方 NaiveProxy 的上述场景；只要失败，Release Job 就不得发布。arm64 通过实际交叉编译和静态插件校验，**没有宣称在 ARM64 真机上运行过 E2E**。
 
-后续版本以 Releases、正式构建记录和 `Release UDP E2E（H1/H2/H3）` 工作流结果共同为准。
+另有 [发布后二次验收工作流](https://github.com/wekingchen/mycaddy/actions/workflows/release-udp-e2e.yml) 检验 Release 附件本身，不是仅检查开发分支代码。
+
+后续具体发布日期、版本与构建结果，请查看 [Releases](https://github.com/wekingchen/mycaddy/releases) 和对应工作流。

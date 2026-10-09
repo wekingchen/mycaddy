@@ -825,6 +825,7 @@ func (srv udpProxyServer) HandlePacket(str http3.Stream, req Request, rc *net.UD
 		return srv.HandlePacketBind(str, req, rc)
 	}
 
+	srv.Debug("H3 CONNECT-UDP datagram bridge started", zap.String("target", string(req)))
 	// https://github.com/quic-go/masque-go/blob/master/proxy.go
 	done := make(chan struct{})
 
@@ -832,19 +833,25 @@ func (srv udpProxyServer) HandlePacket(str http3.Stream, req Request, rc *net.UD
 		for {
 			data, err := str.ReceiveDatagram(context.Background())
 			if err != nil {
+				srv.Debug("H3 CONNECT-UDP ReceiveDatagram stopped", zap.Error(err))
 				break
 			}
+			srv.Debug("H3 CONNECT-UDP datagram received", zap.Int("bytes", len(data)))
 			id, nr, err := quicvarint.Parse(data)
 			if err != nil {
+				srv.Debug("H3 CONNECT-UDP context ID parse failed", zap.Error(err))
 				break
 			}
 			if id != 0 {
+				srv.Debug("H3 CONNECT-UDP dropped nonzero context", zap.Uint64("id", id))
 				// Drop this datagram. We currently only support proxying of UDP payloads.
 				continue
 			}
 			if _, err := rc.Write(data[nr:]); err != nil {
+				srv.Debug("H3 CONNECT-UDP UDP target write failed", zap.Error(err))
 				break
 			}
+			srv.Debug("H3 CONNECT-UDP UDP target packet sent", zap.Int("bytes", len(data)-nr))
 		}
 
 		rc.Close()
@@ -856,13 +863,17 @@ func (srv udpProxyServer) HandlePacket(str http3.Stream, req Request, rc *net.UD
 		for {
 			nr, err := rc.Read(b[1:])
 			if err != nil {
+				srv.Debug("H3 CONNECT-UDP UDP target read stopped", zap.Error(err))
 				break
 			}
+			srv.Debug("H3 CONNECT-UDP UDP target packet received", zap.Int("bytes", nr))
 
 			// context id is always 0
 			if err := str.SendDatagram(b[:nr+1]); err != nil {
+				srv.Debug("H3 CONNECT-UDP SendDatagram failed", zap.Error(err))
 				break
 			}
+			srv.Debug("H3 CONNECT-UDP datagram returned", zap.Int("bytes", nr))
 		}
 
 		done <- struct{}{}
@@ -1079,7 +1090,7 @@ func (h Handler) tryUDPoverHTTP(w http.ResponseWriter, r *http.Request) (bool, e
 		// slog.Info(fmt.Sprintf("handle UDP over HTTP/1.1 request: ---> %s", req))
 
 		w.Header().Set("Connection", "Upgrade")
-		w.Header().Set("Upgrade:", RequestProtocol)
+		w.Header().Set("Upgrade", RequestProtocol)
 		w.Header().Set(http3.CapsuleProtocolHeader, CapsuleProtocolHeaderValue)
 		if req == "*" {
 			w.Header().Set(ConnectUDPBindHeader, ConnectUDPBindHeaderValue)

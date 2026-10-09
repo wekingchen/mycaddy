@@ -81,6 +81,11 @@ def run_client() -> tuple[str, bytes]:
         status = headers.split(b"\r\n", 1)[0].decode("ascii", "replace")
         if " 101 " not in status:
             raise RuntimeError(f"expected HTTP 101, got {status}\n{headers.decode('latin1')}")
+        fields = [line.strip().lower() for line in headers.split(b"\r\n")[1:]]
+        if b"connection: upgrade" not in fields:
+            raise RuntimeError("HTTP 101 response lacks Connection: Upgrade")
+        if b"upgrade: connect-udp" not in fields:
+            raise RuntimeError("HTTP 101 response lacks Upgrade: connect-udp")
 
         # All varints below are < 64, so RFC 9000 QUIC varint encoding is 1 byte:
         # capsule type=0, capsule length=context-id byte + payload, context-id=0.

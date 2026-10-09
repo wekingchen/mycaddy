@@ -1,5 +1,4 @@
-name: Release UDP E2E（H1/H2/H3）
-
+name: Latest Release UDP E2E（H1/H2/H3 + NaiveProxy）
 on:
   release:
     types: [published]
@@ -9,59 +8,197 @@ permissions:
   contents: read
 
 jobs:
-  udp-e2e:
-    name: 正式 Release 三协议真实 UDP 验证
+  release-udp-e2e:
+    name: Latest Release 三协议真实 UDP 验证
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      NAIVE_VERSION: v154.0.8037.49-4
+
     steps:
-      - name: 检出测试客户端
+      - name: 检出 E2E 测试
         uses: actions/checkout@v7
 
-      - name: 设置 Go
+      - name: 设置 Go（只编译测试客户端，不编译 Caddy）
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.x'
           cache: false
 
-      - name: 下载待验证 Release 原始 amd64 产物
+      - name: 安装 HTTP/2 测试依赖
+        run: python3 -m pip install --disable-pip-version-check h2==4.3.0
+
+      - name: 下载 Latest Release Caddy 原始二进制
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          TAG="${RELEASE_TAG:-}"
-          if [ -z "$TAG" ]; then
-            TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
-          fi
-          echo "📌 验证 Release：$TAG"
           mkdir -p /tmp/release-e2e
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'caddy_amd64.tar.gz' --dir /tmp/release-e2e
-          sha256sum /tmp/release-e2e/caddy_amd64.tar.gz
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          if [[ -z "$RELEASE_TAG" ]]; then
+            RELEASE_TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          fi
+          echo "校验正式发布版本：$RELEASE_TAG"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern 'caddy_amd64.tar.gz' --dir /tmp/release-e2e
           tar -xzf /tmp/release-e2e/caddy_amd64.tar.gz -C /tmp/release-e2e
           chmod +x /tmp/release-e2e/caddy_amd64
+          echo "CADDY_RELEASE=$RELEASE_TAG" | tee -a "$GITHUB_ENV"
           /tmp/release-e2e/caddy_amd64 version
 
-      - name: HTTP/1.1 CONNECT-UDP 真实 UDP Echo
+      - name: 下载官方 NaiveProxy 客户端
         run: |
           set -euo pipefail
-          python3 tests/udp-over-http-e2e.py /tmp/release-e2e/caddy_amd64
+          mkdir -p /tmp/naive
+          url="https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-linux-x64.tar.xz"
+          curl -fL "$url" -o /tmp/naive.tar.xz
+          tar -xJf /tmp/naive.tar.xz -C /tmp/naive
+          NAIVE_BIN="$(find /tmp/naive -type f -name naive | head -n1)"
+          test -n "$NAIVE_BIN"
+          chmod +x "$NAIVE_BIN"
+          echo "NAIVE_BIN=$NAIVE_BIN" | tee -a "$GITHUB_ENV"
+          "$NAIVE_BIN" --version
 
-      - name: 构建 HTTP/2 + HTTP/3 E2E 测试客户端
+      - name: 准备本地证书、UDP Echo 与协议测试 Caddy
         run: |
           set -euo pipefail
-          cd tests/udp-e2e-go
-          go mod tidy
-          go build -o /tmp/udp-e2e-client .
+          openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes             -keyout /tmp/e2e.key -out /tmp/e2e.crt             -subj '/CN=localhost'             -addext 'subjectAltName=DNS:localhost,DNS:outer.test,DNS:inner.test,IP:127.0.0.1'             >/dev/null 2>&1
 
-      - name: HTTP/2 Extended CONNECT 真实 UDP Echo
+          cat >/tmp/udp-echo.py <<'PY'
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.bind(("127.0.0.1", 19090))
+          while True:
+              data, addr = s.recvfrom(65535)
+              print("UDP_ECHO_RX=" + data.decode("utf-8", "replace"), flush=True)
+              s.sendto(data, addr)
+          PY
+          python3 -u /tmp/udp-echo.py >/tmp/udp-echo.log 2>&1 &
+          echo $! >/tmp/udp-echo.pid
+
+          cat >/tmp/direct.Caddyfile <<'CADDY'
+          {
+              admin off
+              auto_https disable_redirects
+              servers {
+                  protocols h1 h2 h3
+              }
+          }
+          http://127.0.0.1:18080 {
+              forward_proxy {
+                  ports 19090
+                  acl {
+                      allow 127.0.0.1/32
+                  }
+              }
+          }
+          https://localhost:18443 {
+              tls /tmp/e2e.crt /tmp/e2e.key
+              forward_proxy {
+                  ports 19090
+                  acl {
+                      allow 127.0.0.1/32
+                  }
+              }
+          }
+          CADDY
+
+          GODEBUG=http2xconnect=1 /tmp/release-e2e/caddy_amd64 run --config /tmp/direct.Caddyfile --adapter caddyfile >/tmp/direct-caddy.log 2>&1 &
+          echo $! >/tmp/direct-caddy.pid
+
+          python3 - <<'PY'
+          import socket, time
+          deadline=time.time()+15
+          while time.time()<deadline:
+              try:
+                  with socket.create_connection(("127.0.0.1",18080),.5):
+                      break
+              except OSError:
+                  time.sleep(.2)
+          else:
+              raise SystemExit("Caddy did not start")
+          PY
+
+      - name: HTTP/1.1 CONNECT-UDP → UDP Echo
+        id: h1
+        continue-on-error: true
         run: |
           set -euo pipefail
-          /tmp/udp-e2e-client /tmp/release-e2e/caddy_amd64 h2
+          python3 tests/release-udp-e2e.py --protocol h1 --port 18080
 
-      - name: HTTP/3 CONNECT-UDP Datagram 真实 UDP Echo
+      - name: HTTP/2 Extended CONNECT-UDP → UDP Echo
+        id: h2
+        continue-on-error: true
         run: |
           set -euo pipefail
-          /tmp/udp-e2e-client /tmp/release-e2e/caddy_amd64 h3
+          mkdir -p /tmp/h2-e2e
+          cp tests/release-udp-h2.go /tmp/h2-e2e/main.go
+          cd /tmp/h2-e2e
+          go mod init mycaddy-release-h2-e2e
+          go get golang.org/x/net/http2@latest
+          go run . localhost:18443 127.0.0.1:19090
 
-      - name: 三协议验收完成
-        run: echo "✅ Release 原始二进制的 HTTP/1.1 / HTTP/2 / HTTP/3 UDP Echo 全部通过"
+      - name: HTTP/3 CONNECT-UDP Datagram → UDP Echo
+        id: h3
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/h3-e2e
+          cp tests/release-udp-h3.go /tmp/h3-e2e/main.go
+          cd /tmp/h3-e2e
+          go mod init mycaddy-release-h3-e2e
+          go get github.com/quic-go/masque-go@v0.6.0
+          go run . localhost:18443 127.0.0.1:19090
+
+      - name: 官方 NaiveProxy 单层 HTTP/2 CONNECT 真实 TCP 验证
+        id: naive_h2
+        continue-on-error: true
+        run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h2
+
+      - name: 官方 NaiveProxy 单层 HTTP/3 CONNECT 真实 TCP 验证
+        id: naive_h3
+        continue-on-error: true
+        run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h3
+
+      - name: 官方 NaiveProxy 双层 QUIC CONNECT-UDP 真实 UDP 与首次握手验证
+        id: naive
+        continue-on-error: true
+        run: bash tests/official-naive-chain-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN"
+
+      - name: 最终判定
+        if: always()
+        run: |
+          echo "H1=${{ steps.h1.outcome }}"
+          echo "H2=${{ steps.h2.outcome }}"
+          echo "H3=${{ steps.h3.outcome }}"
+          echo "NAIVE=${{ steps.naive.outcome }}"
+          echo "NAIVE_H2=${{ steps.naive_h2.outcome }}"
+          echo "NAIVE_H3=${{ steps.naive_h3.outcome }}"
+          test "${{ steps.h1.outcome }}" = success
+          test "${{ steps.h2.outcome }}" = success
+          test "${{ steps.h3.outcome }}" = success
+          test "${{ steps.naive.outcome }}" = success
+          test "${{ steps.naive_h2.outcome }}" = success
+          test "${{ steps.naive_h3.outcome }}" = success
+
+      - name: 失败时收集三协议 UDP 测试日志
+        if: failure()
+        run: |
+          echo "Latest Release: ${CADDY_RELEASE:-unknown}"
+          echo "NaiveProxy: ${NAIVE_VERSION}"
+          echo '--- UDP Echo ---'
+          cat /tmp/udp-echo.log 2>/dev/null || true
+          echo '--- Direct Caddy ---'
+          tail -n 100 /tmp/direct-caddy.log 2>/dev/null || true
+          echo '--- NaiveProxy ---'
+          tail -n 100 /tmp/naive.log 2>/dev/null || true
+          echo '--- Chain Caddy ---'
+          tail -n 100 /tmp/chain-caddy.log 2>/dev/null || true
+          echo '--- Outer access ---'
+          cat /tmp/outer-access.log 2>/dev/null || true
+
+      - name: 清理后台进程
+        if: always()
+        run: |
+          for f in /tmp/direct-caddy.pid /tmp/udp-echo.pid; do
+            if [ -f "$f" ]; then kill "$(cat "$f")" 2>/dev/null || true; fi
+          done

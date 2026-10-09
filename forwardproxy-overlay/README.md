@@ -65,9 +65,16 @@ github.com/sagernet/sing-quic
 
 SagerNet `http3` 当前没有导出原版 quic-go 的 `ParseCapsule`，所以 overlay 内保留了一个最小的 RFC 9297 Capsule framing 解析辅助函数 `parseUDPCapsule`。它只替代缺失的辅助 API，不改变 UDP-over-HTTP 协议逻辑。
 
-HTTP/2 不能像 HTTP/1.1 那样对 `ResponseWriter` 做 `Hijack`。当前实现把 HTTP/2 请求体作为读取端、`ResponseWriter` 作为写入端，组成真正的双向 stream，并在写回后显式 Flush。
+### HTTP/2 双向流与 HTTP/3 Datagram
 
-HTTP/3 还需要 Caddy 自身允许 Datagram。构建阶段的 `scripts/apply-caddy-http3-datagrams.py` 会同时为 Caddy 的 QUIC listener 开启 `EnableDatagrams`，并为 `http3.Server` 开启 HTTP Datagram SETTINGS；缺一层，标准 MASQUE 客户端都不会建立可用的 CONNECT-UDP Datagram 通道。
+HTTP/2 Extended CONNECT **不能**像 HTTP/1.1 一样 Hijack 底层 TCP 连接；当前实现通过 HTTP/2 的请求 Body + ResponseWriter 传输双向 Capsule，并在需要时 Flush。Go 的 HTTP/2 Extended CONNECT 必须在服务端启用 RFC 8441（`GODEBUG=http2xconnect=1`）。
+
+HTTP/3 的 CONNECT-UDP 依赖**两层**支持：QUIC 传输的 `EnableDatagrams` 与 HTTP/3 Server 的 `EnableDatagrams`。缺一不可，所以 `scripts/apply-caddy-http3-datagrams.py` 必须在 klzgrad 的 BBRv1 补丁后执行。
+
+双层 QUIC 的外层包必须大到能容纳内层 QUIC，但不能把**内外层**都盲目调大。补丁保持 Caddy 默认的 **1200 字节**不变，提供按进程配置的 `MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452` 供**外层**代理使用，内层仍使用默认 1200 字节。该数值针对常见 1500 MTU 网络；低 MTU 路径必须另行验证。
+
+
+不满足这些条件，代码即使编译成功、模块齐全，也会在真实流量测试中失败。本项目将这些测试加入了正式发布前的验收标准。
 
 ## 构建接入点
 
@@ -89,12 +96,12 @@ HTTP/3 还需要 Caddy 自身允许 Datagram。构建阶段的 `scripts/apply-ca
 4. 读取 klzgrad 的 `CADDY_VERSION`。
 5. 拉取对应版本 Caddy。
 6. 应用 klzgrad 自带的 `caddy-sing-quic-bbrv1.patch`。
-7. 执行 `scripts/apply-caddy-http3-datagrams.py`，同时启用 QUIC Datagram 与 HTTP/3 Datagram SETTINGS。
+7. 应用 `scripts/apply-caddy-http3-datagrams.py`，启用 H3 Datagram 和双层 QUIC 包容量适配。
 8. 用 patched Caddy + SagerNet QUIC 更新临时 `go.mod` 并执行 `go test ./...`。
-9. 用 xcaddy 将修改后的本地 forwardproxy 和其他插件一起编入最终 Caddy。
-10. 对最终 amd64/arm64 二进制检查插件依赖和 UDP-over-HTTP 特征。
-11. 直接启动最终 amd64 ELF，分别通过 HTTP/1.1 Upgrade、HTTP/2 Extended CONNECT、HTTP/3 Datagram 向真实 UDP Echo Server 发包并验证原样回包。
-12. 全部通过后才允许主分支发布 Release；发布完成后还会下载 Release 原始 amd64 产物重跑三协议 E2E。
+9. 用 xcaddy 将修改后的 forwardproxy 和其他插件一起编入 Caddy。
+10. 对最终 amd64/arm64 二进制逐项检查插件依赖和 UDP-over-HTTP 特征。
+11. 用真实 UDP Echo 验证 H1/H2/H3，再使用官方 NaiveProxy 验证单层及双层 QUIC 代理。
+12. 全部通过后才允许主分支发布 Release。
 
 ## 最终产物验证
 
@@ -121,14 +128,6 @@ connect-udp-bind over http3 is not supported yet
 并且要求 `github.com/caddyserver/forwardproxy` 以及所有自定义插件都存在于最终 Go build info。
 
 amd64 还会实际运行 `caddy list-modules`，对 Caddy module 做第二层校验；arm64 因 x86_64 GitHub Runner 无法直接执行 ARM64 ELF，使用静态 build info 校验。
-
-最关键的是，amd64 不再只做静态确认。工作流会真正启动最终 Caddy 和本地 UDP Echo Server，逐项验证：
-
-- HTTP/1.1 Upgrade `connect-udp`：必须得到 101，并完成 UDP payload 往返；
-- HTTP/2 Extended CONNECT：必须得到 200，并通过双向 H2 stream 完成 UDP payload 往返；
-- HTTP/3 CONNECT-UDP：必须协商 QUIC/HTTP Datagram，并通过 H3 Datagram 完成 UDP payload 往返。
-
-这三项任何一项失败，正式构建都不能进入 Release。
 
 ## 维护原则
 
