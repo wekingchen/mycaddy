@@ -19,6 +19,7 @@ on:
       - 'forwardproxy-overlay/udp_over_http.go'
       - 'forwardproxy-overlay/forwardproxy_udp_test.go'
       - 'scripts/apply-forwardproxy-udp.py'
+      - 'tests/udp-over-http-e2e.py'
 
 permissions:
   contents: write
@@ -174,6 +175,12 @@ jobs:
 
           "$(go env GOPATH)/bin/xcaddy" build "$CADDY_VERSION"             --output "caddy_${{ matrix.arch }}"             --replace "github.com/caddyserver/caddy/v2=$GITHUB_WORKSPACE/caddy-bbr"             --with "github.com/caddyserver/forwardproxy=$GITHUB_WORKSPACE/forwardproxy"             --with github.com/caddyserver/jsonc-adapter             --with github.com/mholt/caddy-l4             --with github.com/caddy-dns/cloudflare             --with github.com/caddy-dns/tencentcloud             --with github.com/caddy-dns/duckdns             --with github.com/mholt/caddy-dynamicdns             --with github.com/mholt/caddy-events-exec             --with github.com/WeidiDeng/caddy-cloudflare-ip             --with github.com/xcaddyplugins/caddy-trusted-cloudfront             --with github.com/mholt/caddy-webdav             --with github.com/imgk/caddy-trojan
 
+      - name: 运行真实 UDP-over-HTTP E2E（amd64）
+        if: ${{ matrix.arch == 'amd64' }}
+        run: |
+          set -euo pipefail
+          python3 tests/udp-over-http-e2e.py "./caddy_amd64"
+
       - name: 校验模块、架构并打包
         env:
           UPSTREAM_COMMIT: ${{ needs.check-updates.outputs.upstream_commit }}
@@ -307,6 +314,7 @@ jobs:
           - HTTP/2 Extended CONNECT 流式 UDP
           - HTTP/3 Datagram
           - CONNECT-UDP-BIND：HTTP/1.1 / HTTP/2 支持；HTTP/3 BIND 暂未实现
+          - 真实 E2E：最终 amd64 二进制通过 HTTP/1.1 Upgrade 向 UDP Echo Server 发包并验证原样回包
 
           ## 其他内置插件
           - jsonc-adapter
