@@ -195,8 +195,14 @@ jobs:
                   output file /tmp/outer-access.log
                   format json
               }
+
+              @naive_preamble {
+                  method GET
+                  path /
+              }
+              respond @naive_preamble 204
+
               forward_proxy {
-                  basic_auth e2e e2e
                   ports 19444
                   acl {
                       allow 127.0.0.1/32
@@ -205,8 +211,14 @@ jobs:
           }
           https://inner.test:19444 {
               tls /tmp/e2e.crt /tmp/e2e.key
+
+              @naive_preamble {
+                  method GET
+                  path /
+              }
+              respond @naive_preamble 204
+
               forward_proxy {
-                  basic_auth e2e e2e
                   ports 18081
                   acl {
                       allow 127.0.0.1/32
@@ -223,7 +235,7 @@ jobs:
           cat >/tmp/naive-config.json <<'JSON'
           {
             "listen": "socks://127.0.0.1:11080",
-            "proxy": "quic://e2e:e2e@inner.test:19444,quic://e2e:e2e@outer.test:19443",
+            "proxy": "quic://inner.test:19444,quic://outer.test:19443",
             "host-resolver-rules": "MAP inner.test 127.0.0.1, MAP outer.test 127.0.0.1",
             "log": ""
           }
