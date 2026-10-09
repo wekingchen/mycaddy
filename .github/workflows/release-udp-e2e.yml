@@ -1,5 +1,10 @@
 name: Latest Release UDP E2E（H1/H2/H3 + NaiveProxy）
 on:
+  # 当 release 由 GITHUB_TOKEN 创建时，published 事件不会再次触发工作流。
+  # 临时推送触发一次正式产物验收；验证完成后移除此触发器。
+  push:
+    branches: [main]
+    paths: ['.github/workflows/release-udp-e2e.yml']
   release:
     types: [published]
   workflow_dispatch:
