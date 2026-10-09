@@ -184,7 +184,8 @@ jobs:
           "./caddy_${{ matrix.arch }}" list-modules | tee "modules_${{ matrix.arch }}.txt"
 
           grep -qx 'http.handlers.forward_proxy' "modules_${{ matrix.arch }}.txt"
-          grep -qx 'http.handlers.layer4' "modules_${{ matrix.arch }}.txt"
+          grep -qx 'layer4' "modules_${{ matrix.arch }}.txt"
+          grep -qx 'caddy.listeners.layer4' "modules_${{ matrix.arch }}.txt"
 
           cat > "build-info_${{ matrix.arch }}.txt" <<EOF
           klzgrad/forwardproxy branch: naive
