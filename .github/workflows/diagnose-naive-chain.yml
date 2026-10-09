@@ -115,7 +115,7 @@ jobs:
           proxies={
               "outer":"quic://outer.test:19443",
               "inner":"quic://inner.test:19444",
-              "chain":"quic://inner.test:19444,quic://outer.test:19443",
+              "chain":"quic://outer.test:19443,quic://inner.test:19444",
           }
           json.dump({
               "listen":"socks://127.0.0.1:11080",
