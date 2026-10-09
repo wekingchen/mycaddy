@@ -3,7 +3,8 @@
 
 Caddy creates the QUIC listener itself, so RFC 9297 / RFC 9298 needs both:
 1. QUIC transport datagrams (quic.Config.EnableDatagrams)
-2. HTTP/3 datagram SETTINGS (http3.Server.EnableDatagrams)\n3. Per-process QUIC packet sizing for nested QUIC: the default stays 1200
+2. HTTP/3 datagram SETTINGS (http3.Server.EnableDatagrams)
+3. Per-process QUIC packet sizing for nested QUIC: the default stays 1200
    bytes. An explicitly configured outer MASQUE proxy can set
    MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452 (only on common 1500-MTU paths).
    Inner servers must keep smaller packets; raising both sides globally
