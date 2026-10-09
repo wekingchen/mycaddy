@@ -58,7 +58,11 @@ func startUDPEcho(port int) (<-chan error, <-chan []byte) {
 
 func startCaddy(caddy, dir string, httpsPort, udpPort int) (*exec.Cmd, *os.File) {
 	caddyfile := filepath.Join(dir, "Caddyfile")
-	cfg := fmt.Sprintf(`{\n    auto_https disable_redirects\n}\n\nhttps://localhost:%d {
+	cfg := fmt.Sprintf(`{
+    auto_https disable_redirects
+}
+
+https://localhost:%d {
     tls internal
     forward_proxy {
         ports %d
