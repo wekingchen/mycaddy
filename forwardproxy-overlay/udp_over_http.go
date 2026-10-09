@@ -625,6 +625,24 @@ func (rm RequestMatcher) Extract(input string) (map[string]string, error) {
 	return result, nil
 }
 
+func http3StreamFromResponseWriter(w http.ResponseWriter) (*http3.Stream, error) {
+	for i := 0; i < 16; i++ {
+		if streamer, ok := w.(http3.HTTPStreamer); ok {
+			return streamer.HTTPStream(), nil
+		}
+		unwrapper, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return nil, fmt.Errorf("HTTP/3 ResponseWriter %T does not expose HTTPStream", w)
+		}
+		next := unwrapper.Unwrap()
+		if next == nil || next == w {
+			return nil, fmt.Errorf("HTTP/3 ResponseWriter unwrap stopped at %T", w)
+		}
+		w = next
+	}
+	return nil, fmt.Errorf("HTTP/3 ResponseWriter unwrap depth exceeded")
+}
+
 type http2Stream struct {
 	r io.Reader
 	w http.ResponseWriter
@@ -1097,7 +1115,11 @@ func (h Handler) tryUDPoverHTTP(w http.ResponseWriter, r *http.Request) (bool, e
 		w.Header().Set(http3.CapsuleProtocolHeader, CapsuleProtocolHeaderValue)
 		w.WriteHeader(http.StatusOK)
 
-		return true, h.udpProxyServer.HandlePacket(*(w.(http3.HTTPStreamer).HTTPStream()), req, rconn)
+		stream, err := http3StreamFromResponseWriter(w)
+		if err != nil {
+			return true, caddyhttp.Error(http.StatusInternalServerError, err)
+		}
+		return true, h.udpProxyServer.HandlePacket(*stream, req, rconn)
 	default:
 		return false, nil
 	}
