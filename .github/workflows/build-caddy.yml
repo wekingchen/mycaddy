@@ -24,7 +24,6 @@ on:
       - 'tests/udp-e2e-go/**'
       - 'tests/official-naive-e2e.sh'
       - 'tests/official-naive-chain-e2e.sh'
-      - 'tests/udp-over-http-e2e.py'
 
 concurrency:
   group: build-caddy-${{ github.ref }}
@@ -331,6 +330,9 @@ jobs:
     needs: [check-updates, build]
     if: ${{ github.ref == 'refs/heads/main' && needs.check-updates.outputs.upstream_commit != '' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
     steps:
       - name: 下载 amd64 包
         uses: actions/download-artifact@v7
@@ -393,3 +395,14 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$TAG"             --repo "$GITHUB_REPOSITORY"             --title "NaiveProxy Caddy $TAG"             --notes-file release_notes.md             release/caddy_amd64.tar.gz             release/caddy_arm64.tar.gz
+
+      - name: 显式触发已发布产物 H1/H2/H3 + 官方 NaiveProxy E2E
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run release-udp-e2e.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f release_tag="$TAG"
+          echo "✅ 已为 $TAG 触发独立 Release E2E：直接下载原始附件，不重复编译 Caddy"

@@ -1,13 +1,15 @@
 name: Latest Release UDP E2E（H1/H2/H3 + NaiveProxy）
 on:
-  # 当 release 由 GITHUB_TOKEN 创建时，published 事件不会再次触发工作流。
-  # 临时推送触发一次正式产物验收；验证完成后移除此触发器。
-  push:
-    branches: [main]
-    paths: ['.github/workflows/release-udp-e2e.yml']
+  # 当 release 由 GITHUB_TOKEN 创建时，published 不会再次触发。
+  # 正式构建使用 workflow_dispatch 显式启动此二进制 E2E。
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '需要验收的 Release Tag（留空则用 Latest）'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -39,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/release-e2e
-          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          RELEASE_TAG="${{ inputs.release_tag || github.event.release.tag_name }}"
           if [[ -z "$RELEASE_TAG" ]]; then
             RELEASE_TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
           fi
