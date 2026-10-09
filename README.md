@@ -19,10 +19,12 @@ klzgrad/forwardproxy:naive
         ▼
 对应版本 Caddy + SagerNet quic-go / sing-quic BBRv1
         │
+        ├─ 启用 QUIC + HTTP/3 Datagram
         ├─ 应用本仓库 UDP-over-HTTP overlay
         ├─ 运行 forwardproxy 回归测试
         ├─ 加入全部自定义 Caddy 插件
-        └─ 构建 linux/amd64 + linux/arm64
+        ├─ 构建 linux/amd64 + linux/arm64
+        └─ amd64 实跑 H1 / H2 / H3 UDP Echo E2E
 ```
 
 这里刻意**不长期 fork klzgrad 的完整 forwardproxy 源码**。每次构建都重新拉取 `naive` 最新提交，再把本仓库维护的 UDP 增量叠加上去。
@@ -39,7 +41,7 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 "add UDP in HTTP"
 ```
 
-为兼容 klzgrad 当前的 Caddy BBRv1 方案，overlay 已从原版 `quic-go` 适配到 `github.com/sagernet/quic-go`。
+为兼容 klzgrad 当前的 Caddy BBRv1 方案，overlay 已从原版 `quic-go` 适配到 `github.com/sagernet/quic-go`。此外，Caddy 自己创建 QUIC/HTTP3 listener 时默认没有为本功能开启 Datagram，因此构建阶段会通过 `scripts/apply-caddy-http3-datagrams.py` 同时开启 QUIC Datagram 与 HTTP/3 Datagram SETTINGS；脚本使用严格锚点，Caddy 上游结构变化时会主动失败，避免静默产出“有代码但 H3 实际不可用”的二进制。
 
 当前支持情况：
 
@@ -86,11 +88,13 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 3. 如果上游 Commit 与最新 Release 已记录的 Commit 相同，则定时任务跳过构建。
 4. 如果上游更新，重新拉取最新源码。
 5. 应用本仓库 UDP-over-HTTP overlay。
-6. 拉取 klzgrad 指定版本的 Caddy，并应用上游 `caddy-sing-quic-bbrv1.patch`。
+6. 拉取 klzgrad 指定版本的 Caddy，应用上游 `caddy-sing-quic-bbrv1.patch`，并开启 QUIC + HTTP/3 Datagram。
 7. 在 patched Caddy + SagerNet QUIC 环境下运行 `go test ./...`。
 8. 使用 xcaddy 加入全部插件，分别编译 `linux/amd64` 和 `linux/arm64`。
-9. 对最终二进制做功能校验。
-10. 两个架构全部成功后才发布 Release。
+9. 对最终二进制做插件、模块、架构和 UDP 特征校验。
+10. 对最终 `caddy_amd64` 依次运行 HTTP/1.1 Upgrade、HTTP/2 Extended CONNECT、HTTP/3 Datagram 三组真实 UDP Echo E2E；每组都必须实际发包、Echo Server 收包并原样回包。
+11. 两个架构构建和三协议 E2E 全部成功后才允许主分支发布 Release。
+12. Release 发布后，`.github/workflows/release-udp-e2e.yml` 会再次直接下载该 Release 的原始 `caddy_amd64.tar.gz`，对发布产物重跑 H1/H2/H3 E2E，不重新编译 Caddy。
 
 手动运行时可使用 `force_build=true` 强制重新构建当前上游版本。
 
@@ -105,7 +109,9 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 - 所有自定义插件是否出现在 Go build info 中；
 - UDP-over-HTTP 的关键协议/配置特征是否实际存在于最终二进制；
 - amd64 额外直接执行 `caddy list-modules`，逐项检查所有关键 Caddy module；
-- arm64 因 GitHub Ubuntu Runner 为 x86_64，不能直接执行 ARM64 ELF，因此使用静态 build info 做跨架构校验。
+- arm64 因 GitHub Ubuntu Runner 为 x86_64，不能直接执行 ARM64 ELF，因此使用静态 build info 做跨架构校验；
+- amd64 必须用最终 ELF 实际跑通 HTTP/1.1、HTTP/2、HTTP/3 三种 CONNECT-UDP 数据路径，UDP Echo payload 必须逐字节一致；
+- 新 Release 发布后，再对从 Releases 下载回来的原始 amd64 压缩包执行同一组三协议 E2E。
 
 UDP-over-HTTP 检查的关键特征包括：
 
@@ -117,7 +123,9 @@ Connect-Udp-Bind
 connect-udp-bind over http3 is not supported yet
 ```
 
-这意味着 UDP overlay 如果没有真正进入最终二进制，构建会直接失败，不会继续发布 Release。
+这意味着 UDP overlay 如果没有真正进入最终二进制，构建会直接失败，不会继续发布 Release。静态特征只能证明代码被链接，真正的可用性由三协议 UDP Echo E2E 负责兜底。
+
+HTTP/2 的数据通道使用请求体读取 + ResponseWriter 写回的双向 HTTP/2 stream，不再尝试 `Hijack`（HTTP/2 的 net/http ResponseWriter 不支持 Hijack）。HTTP/3 则要求 QUIC transport 和 HTTP/3 SETTINGS 两层都协商 Datagram。
 
 ## 下载与使用
 
@@ -180,9 +188,10 @@ python3 scripts/apply-forwardproxy-udp.py forwardproxy/forwardproxy.go
 # 4. 读取 klzgrad 指定 Caddy 版本
 CADDY_VERSION="$(tr -d '\r\n' < forwardproxy/CADDY_VERSION)"
 
-# 5. 拉取对应 Caddy，并应用 klzgrad BBRv1 补丁
+# 5. 拉取对应 Caddy，应用 klzgrad BBRv1 补丁，并开启 HTTP/3 Datagram
 git clone --depth 1 --branch "$CADDY_VERSION" https://github.com/caddyserver/caddy.git caddy-bbr
 git -C caddy-bbr apply "$PWD/forwardproxy/caddy-sing-quic-bbrv1.patch"
+python3 scripts/apply-caddy-http3-datagrams.py "$PWD/caddy-bbr"
 
 # 6. 用最终依赖环境测试 forwardproxy
 cd forwardproxy
@@ -209,12 +218,12 @@ go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 
 ## 当前验证状态
 
-截至 2026-10-09，正式工作流 #704 已验证：
+2026-10-09 的真实网络验证发现并修复了两个此前仅靠“编译成功/二进制特征存在”无法发现的问题：
 
-- klzgrad `naive` Commit：`c096d6a00cb28e019cc1995b04bdc6a9311d8024`
-- Caddy：`v2.11.7`
-- amd64：回归测试、编译、模块校验、Artifact、Release 均成功
-- arm64：回归测试、编译、静态模块校验、Artifact、Release 均成功
-- 正式 Release：`v2.11.7-20261009-002817`
+- 正式 Release `v2.11.7-20261009-002817`：HTTP/1.1 UDP Echo 真实往返通过；HTTP/2 因旧实现尝试 Hijack HTTP/2 stream 而失败；HTTP/3 因 Caddy 未协商 Datagram 而失败。
+- 修复候选构建 GitHub Actions #37873089934：amd64 的 HTTP/1.1、HTTP/2、HTTP/3 三条真实 UDP Echo 数据路径全部通过；arm64 同轮构建成功。
+- HTTP/3 CONNECT-UDP-BIND 仍未实现，本次修复没有改变这一限制。
 
-后续版本以 Releases 和对应构建记录为准。
+因此从本次修复开始，项目不再把“UDP 代码进入二进制”当作可用性结论：**正式发布的前置门槛是候选二进制三协议 E2E 全绿；发布后还要再从 Release 下载原始产物做一次三协议 E2E。**
+
+后续版本以 Releases、正式构建记录和 `Release UDP E2E（H1/H2/H3）` 工作流结果共同为准。
