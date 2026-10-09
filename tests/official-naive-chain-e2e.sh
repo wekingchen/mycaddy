@@ -5,15 +5,15 @@ set -euo pipefail
 CADDY="$(realpath "$1")"
 NAIVE="$(realpath "$2")"
 TMP="$(mktemp -d -t mycaddy-naive-chain-XXXXXXXX)"
-CADDY_PID='' NAIVE_PID='' ORIGIN_PID=''
+CADDY_PID='' INNER_PID='' NAIVE_PID='' ORIGIN_PID=''
 cleanup() {
   local code=$?
   trap - EXIT
-  for pid in "$NAIVE_PID" "$CADDY_PID" "$ORIGIN_PID"; do
+  for pid in "$NAIVE_PID" "$CADDY_PID" "$INNER_PID" "$ORIGIN_PID"; do
     [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
   done
   sleep 0.2
-  for pid in "$NAIVE_PID" "$CADDY_PID" "$ORIGIN_PID"; do
+  for pid in "$NAIVE_PID" "$CADDY_PID" "$INNER_PID" "$ORIGIN_PID"; do
     if [[ -n "$pid" ]]; then
       kill -KILL "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -24,6 +24,8 @@ cleanup() {
     tail -n 80 "$TMP/naive.log" >&2 || true
     echo '--- Caddy ---' >&2
     tail -n 120 "$TMP/caddy.log" >&2 || true
+    echo '--- Inner Caddy ---' >&2
+    tail -n 120 "$TMP/inner-caddy.log" >&2 || true
     echo '--- 外层访问日志 ---' >&2
     tail -n 20 "$TMP/outer-access.log" >&2 || true
   fi
@@ -41,7 +43,7 @@ printf 'official-naive-quic-chain-e2e-ok\n' > "$TMP/origin/marker.txt"
 python3 -m http.server 18081 --bind 127.0.0.1 --directory "$TMP/origin" >"$TMP/origin.log" 2>&1 &
 ORIGIN_PID=$!
 
-cat > "$TMP/Caddyfile" <<CADDYFILE
+cat > "$TMP/outer.Caddyfile" <<CADDYFILE
 {
     debug
     admin off
@@ -68,6 +70,16 @@ cat > "$TMP/Caddyfile" <<CADDYFILE
         }
     }
 }
+CADDYFILE
+cat > "$TMP/inner.Caddyfile" <<CADDYFILE
+{
+    debug
+    admin off
+    auto_https disable_redirects
+    servers {
+        protocols h1 h2 h3
+    }
+}
 :19444, inner.test:19444 {
     tls $TMP/tls.crt $TMP/tls.key
     @naive_preamble {
@@ -84,8 +96,12 @@ cat > "$TMP/Caddyfile" <<CADDYFILE
 }
 CADDYFILE
 
-GODEBUG=http2xconnect=1 XDG_DATA_HOME="$TMP/data" XDG_CONFIG_HOME="$TMP/config" \
-  "$CADDY" run --config "$TMP/Caddyfile" --adapter caddyfile >"$TMP/caddy.log" 2>&1 &
+GODEBUG=http2xconnect=1 XDG_DATA_HOME="$TMP/inner-data" XDG_CONFIG_HOME="$TMP/inner-config" \
+  "$CADDY" run --config "$TMP/inner.Caddyfile" --adapter caddyfile >"$TMP/inner-caddy.log" 2>&1 &
+INNER_PID=$!
+MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452 GODEBUG=http2xconnect=1 \
+  XDG_DATA_HOME="$TMP/data" XDG_CONFIG_HOME="$TMP/config" \
+  "$CADDY" run --config "$TMP/outer.Caddyfile" --adapter caddyfile >"$TMP/caddy.log" 2>&1 &
 CADDY_PID=$!
 python3 - <<'PY'
 import socket, time
