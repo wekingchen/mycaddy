@@ -70,6 +70,7 @@ func startUDPEcho(port int) (<-chan error, <-chan []byte, <-chan struct{}) {
 func startCaddy(caddy, dir string, httpsPort, udpPort int) (*exec.Cmd, *os.File) {
 	caddyfile := filepath.Join(dir, "Caddyfile")
 	cfg := fmt.Sprintf(`{
+    debug
     auto_https disable_redirects
 }
 
