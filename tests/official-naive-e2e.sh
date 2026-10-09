@@ -28,6 +28,8 @@ case "$MODE" in
 esac
 
 TARGET_PORT=19110
+TARGET_HOST="$(hostname -I | awk '{print $1}')"
+test -n "$TARGET_HOST"
 TMP="$(mktemp -d -t mycaddy-naive-e2e-XXXXXX)"
 CADDY_PID=""
 NAIVE_PID=""
@@ -58,7 +60,7 @@ import socket, sys
 port = int(sys.argv[1])
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(("127.0.0.1", port))
+    srv.bind(("0.0.0.0", port))
     srv.listen(1)
     print("ECHO_READY", flush=True)
     conn, addr = srv.accept()
@@ -88,7 +90,7 @@ https://localhost:$CADDY_PORT {
     forward_proxy {
         ports $TARGET_PORT
         acl {
-            allow 127.0.0.1/32
+            allow $TARGET_HOST/32
         }
     }
 }
@@ -136,13 +138,14 @@ SSL_CERT_FILE="$ROOT_CERT" \
   --log="$TMP/naive.log" &
 NAIVE_PID=$!
 
-python3 - "$SOCKS_PORT" "$TARGET_PORT" "$MODE" "$NAIVE_PID" <<'PY'
+python3 - "$SOCKS_PORT" "$TARGET_HOST" "$TARGET_PORT" "$MODE" "$NAIVE_PID" <<'PY'
 import os, socket, struct, sys, time
 
 socks_port = int(sys.argv[1])
-target_port = int(sys.argv[2])
-mode = sys.argv[3]
-pid = int(sys.argv[4])
+target_host = sys.argv[2]
+target_port = int(sys.argv[3])
+mode = sys.argv[4]
+pid = int(sys.argv[5])
 payload = f"official-naive-{mode}-tcp-e2e".encode()
 
 deadline = time.time() + 15
@@ -167,7 +170,7 @@ with sock:
     if reply != b"\x05\x00":
         raise SystemExit(f"SOCKS greeting failed: {reply.hex()}")
 
-    req = b"\x05\x01\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack("!H", target_port)
+    req = b"\x05\x01\x00\x01" + socket.inet_aton(target_host) + struct.pack("!H", target_port)
     sock.sendall(req)
 
     head = sock.recv(4)
