@@ -57,6 +57,16 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 
 注意：当 `forward_proxy` 配置了 `upstream` 时，当前 UDP-over-HTTP overlay 不接管该请求。
 
+### HTTP/2 Extended CONNECT 的运行环境
+
+Caddy 当前使用的 `golang.org/x/net/http2` 默认没有开启 RFC 8441 Extended CONNECT。需要在**启动 Caddy 之前**设置 `GODEBUG=http2xconnect=1`，否则普通 HTTP/2 CONNECT-UDP 请求可能被 HTTP/2 协议层拒绝：
+
+```bash
+GODEBUG=http2xconnect=1 ./caddy_amd64 run --config Caddyfile
+```
+
+systemd 部署时可以设置 `Environment=GODEBUG=http2xconnect=1`。这只用于启用 HTTP/2 Extended CONNECT；HTTP/1.1 和 HTTP/3 不依赖该开关。测试工作流对 H2 也显式设置此环境，避免把受限配置误判成协议代码故障。
+
 ### QUIC 的 MTU 限制
 
 NaiveProxy 的双层 QUIC 代理需要把内层 QUIC 包放入外层 HTTP/3 Datagram。Caddy 默认的 1200 字节 QUIC 初始包太小，实际会出现 `DATAGRAM frame too large`，导致首次握手超时。本项目通过严格的源码补丁将外层 QUIC 初始包容量提高至 **1452 字节**，以支持常见的 **1500 MTU** 链路，并由真实的官方客户端 E2E 检验。
