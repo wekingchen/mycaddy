@@ -1,13 +1,5 @@
 name: Latest Release UDP E2E（H1/H2/H3 + NaiveProxy）
 on:
-  push:
-    branches: ['test/udp-e2e']
-    paths:
-      - '.github/workflows/release-udp-e2e.yml'
-      - 'tests/release-udp-e2e.py'
-      - 'tests/release-udp-h3.go'
-      - 'tests/release-udp-h2.go'
-      - 'tests/official-naive-chain-e2e.sh'
   release:
     types: [published]
   workflow_dispatch:
@@ -42,10 +34,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/release-e2e
-          gh release download --repo "$GITHUB_REPOSITORY" --pattern 'caddy_amd64.tar.gz' --dir /tmp/release-e2e
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          if [[ -z "$RELEASE_TAG" ]]; then
+            RELEASE_TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          fi
+          echo "校验正式发布版本：$RELEASE_TAG"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern 'caddy_amd64.tar.gz' --dir /tmp/release-e2e
           tar -xzf /tmp/release-e2e/caddy_amd64.tar.gz -C /tmp/release-e2e
           chmod +x /tmp/release-e2e/caddy_amd64
-          echo "CADDY_RELEASE=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)" | tee -a "$GITHUB_ENV"
+          echo "CADDY_RELEASE=$RELEASE_TAG" | tee -a "$GITHUB_ENV"
           /tmp/release-e2e/caddy_amd64 version
 
       - name: 下载官方 NaiveProxy 客户端
@@ -183,8 +180,8 @@ jobs:
           test "${{ steps.naive_h2.outcome }}" = success
           test "${{ steps.naive_h3.outcome }}" = success
 
-      - name: 汇总三协议真实 UDP 记录
-        if: always()
+      - name: 失败时收集三协议 UDP 测试日志
+        if: failure()
         run: |
           echo "Latest Release: ${CADDY_RELEASE:-unknown}"
           echo "NaiveProxy: ${NAIVE_VERSION}"
