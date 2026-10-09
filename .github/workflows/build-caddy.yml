@@ -23,6 +23,10 @@ on:
       - 'tests/udp-e2e-go/**'
       - 'tests/udp-over-http-e2e.py'
 
+concurrency:
+  group: build-caddy-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
