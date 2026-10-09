@@ -7,6 +7,9 @@ on:
       - 'tests/release-udp-e2e.py'
       - 'tests/release-udp-h3.go'
       - 'tests/release-udp-h2.go'
+      - 'tests/official-naive-chain-e2e.sh'
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -149,100 +152,20 @@ jobs:
           go get github.com/quic-go/masque-go@v0.6.0
           go run . localhost:18443 127.0.0.1:19090
 
-      - name: 官方 NaiveProxy 客户端真实 QUIC/CONNECT-UDP 链路
+      - name: 官方 NaiveProxy 单层 HTTP/2 CONNECT 真实 TCP 验证
+        id: naive_h2
+        continue-on-error: true
+        run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h2
+
+      - name: 官方 NaiveProxy 单层 HTTP/3 CONNECT 真实 TCP 验证
+        id: naive_h3
+        continue-on-error: true
+        run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h3
+
+      - name: 官方 NaiveProxy 双层 QUIC CONNECT-UDP 真实 UDP 与首次握手验证
         id: naive
         continue-on-error: true
-        run: |
-          set -euo pipefail
-          kill "$(cat /tmp/direct-caddy.pid)" || true
-          wait "$(cat /tmp/direct-caddy.pid)" 2>/dev/null || true
-
-          echo '127.0.0.1 outer.test inner.test' | sudo tee -a /etc/hosts >/dev/null
-          mkdir -p /tmp/origin
-          printf '%s\n' 'naiveproxy-connect-udp-real-chain-ok' >/tmp/origin/marker.txt
-          python3 -m http.server 18081 --bind 127.0.0.1 --directory /tmp/origin >/tmp/origin.log 2>&1 &
-          ORIGIN_PID=$!
-
-          cat >/tmp/chain.Caddyfile <<'CADDY'
-          {
-              admin off
-              auto_https disable_redirects
-              servers {
-                  protocols h1 h2 h3
-              }
-          }
-          https://outer.test:19443 {
-              tls /tmp/e2e.crt /tmp/e2e.key
-              log {
-                  output file /tmp/outer-access.log
-                  format json
-              }
-              forward_proxy {
-                  basic_auth e2e e2e
-                  ports 19444
-                  acl {
-                      allow 127.0.0.1/32
-                  }
-              }
-          }
-          https://inner.test:19444 {
-              tls /tmp/e2e.crt /tmp/e2e.key
-              forward_proxy {
-                  basic_auth e2e e2e
-                  ports 18081
-                  acl {
-                      allow 127.0.0.1/32
-                  }
-              }
-          }
-          CADDY
-
-          GODEBUG=http2xconnect=1 /tmp/release-e2e/caddy_amd64 run --config /tmp/chain.Caddyfile --adapter caddyfile >/tmp/chain-caddy.log 2>&1 &
-          CHAIN_CADDY_PID=$!
-          sleep 2
-          kill -0 "$CHAIN_CADDY_PID"
-
-          cat >/tmp/naive-config.json <<'JSON'
-          {
-            "listen": "socks://127.0.0.1:11080",
-            "proxy": "quic://e2e:e2e@inner.test:19444,quic://e2e:e2e@outer.test:19443",
-            "host-resolver-rules": "MAP inner.test 127.0.0.1, MAP outer.test 127.0.0.1",
-            "log": ""
-          }
-          JSON
-
-          SSL_CERT_FILE=/tmp/e2e.crt "$NAIVE_BIN" /tmp/naive-config.json >/tmp/naive.log 2>&1 &
-          NAIVE_PID=$!
-
-          python3 - <<'PY'
-          import socket, time
-          deadline=time.time()+15
-          while time.time()<deadline:
-              try:
-                  with socket.create_connection(("127.0.0.1",11080),.5):
-                      break
-              except OSError:
-                  time.sleep(.2)
-          else:
-              raise SystemExit("NaiveProxy client did not start")
-          PY
-
-          body="$(curl -fsS --max-time 15 --socks5-hostname 127.0.0.1:11080 http://127.0.0.1:18081/marker.txt)"
-          test "$body" = "naiveproxy-connect-udp-real-chain-ok"
-
-          kill "$NAIVE_PID" || true
-          wait "$NAIVE_PID" 2>/dev/null || true
-          sleep 1
-
-          grep -F '.well-known/masque/udp/inner.test/19444/' /tmp/outer-access.log
-          grep -F '"proto":"HTTP/3.0"' /tmp/outer-access.log
-
-          echo "NAIVE_OFFICIAL_CLIENT_CONNECT_UDP_CHAIN=PASS"
-
-          kill "$CHAIN_CADDY_PID" "$ORIGIN_PID" || true
-          wait "$CHAIN_CADDY_PID" 2>/dev/null || true
-          wait "$ORIGIN_PID" 2>/dev/null || true
-
+        run: bash tests/official-naive-chain-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN"
 
       - name: 最终判定
         if: always()
@@ -251,10 +174,14 @@ jobs:
           echo "H2=${{ steps.h2.outcome }}"
           echo "H3=${{ steps.h3.outcome }}"
           echo "NAIVE=${{ steps.naive.outcome }}"
+          echo "NAIVE_H2=${{ steps.naive_h2.outcome }}"
+          echo "NAIVE_H3=${{ steps.naive_h3.outcome }}"
           test "${{ steps.h1.outcome }}" = success
           test "${{ steps.h2.outcome }}" = success
           test "${{ steps.h3.outcome }}" = success
           test "${{ steps.naive.outcome }}" = success
+          test "${{ steps.naive_h2.outcome }}" = success
+          test "${{ steps.naive_h3.outcome }}" = success
 
       - name: 汇总三协议真实 UDP 记录
         if: always()
