@@ -42,7 +42,7 @@ jobs:
       - name: 启动内外 Caddy 和本地目标
         run: |
           set -euo pipefail
-          echo '127.0.0.1 outer.localhost inner.localhost' | sudo tee -a /etc/hosts >/dev/null
+          echo '127.0.0.1 localhost localhost' | sudo tee -a /etc/hosts >/dev/null
           mkdir -p /tmp/origin
           printf '%s\n' 'naiveproxy-connect-udp-real-chain-ok' >/tmp/origin/marker.txt
           python3 -m http.server 18081 --bind 127.0.0.1 --directory /tmp/origin >/tmp/origin.log 2>&1 &
@@ -56,7 +56,7 @@ jobs:
                   protocols h1 h2 h3
               }
           }
-          :19443, outer.localhost:19443 {
+          :19443, localhost:19443 {
               tls internal
               @naive_preamble {
                   method GET
@@ -75,7 +75,7 @@ jobs:
                   }
               }
           }
-          :19444, inner.localhost:19444 {
+          :19444, localhost:19444 {
               tls internal
               @naive_preamble {
                   method GET
@@ -112,14 +112,14 @@ jobs:
           import json, os
           mode=os.environ["MODE"]
           proxies={
-              "outer":"quic://outer.localhost:19443",
-              "inner":"quic://inner.localhost:19444",
-              "chain":"quic://inner.localhost:19444,quic://outer.localhost:19443",
+              "outer":"quic://localhost:19443",
+              "inner":"quic://localhost:19444",
+              "chain":"quic://localhost:19444,quic://localhost:19443",
           }
           json.dump({
               "listen":"socks://127.0.0.1:11080",
               "proxy":proxies[mode],
-              "host-resolver-rules":"MAP inner.localhost 127.0.0.1, MAP outer.localhost 127.0.0.1",
+              "host-resolver-rules":"",
               "log":"","log-net-log":f"/tmp/naive-{mode}-netlog.json",
           },open(f"/tmp/naive-{mode}.json","w"))
           PY
@@ -127,7 +127,7 @@ jobs:
             pid=$!
             for i in $(seq 1 50); do if bash -c "echo >/dev/tcp/127.0.0.1/11080" 2>/dev/null; then break; fi; sleep .2; done
             if [[ "$mode" = outer ]]; then
-              curl -ksS --noproxy '' --max-time 8 --socks5-hostname 127.0.0.1:11080 -o /dev/null -w "CURL_CODE=%{http_code}\n" https://inner.localhost:19444/ || true
+              curl -ksS --noproxy '' --max-time 8 --socks5-hostname 127.0.0.1:11080 -o /dev/null -w "CURL_CODE=%{http_code}\n" https://localhost:19444/ || true
             else
               curl -sS --noproxy '' --max-time 8 --socks5-hostname 127.0.0.1:11080 http://127.0.0.1:18081/marker.txt || true
             fi
