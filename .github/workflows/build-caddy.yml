@@ -22,6 +22,8 @@ on:
       - 'scripts/apply-caddy-http3-datagrams.py'
       - 'tests/udp-over-http-e2e.py'
       - 'tests/udp-e2e-go/**'
+      - 'tests/official-naive-e2e.sh'
+      - 'tests/official-naive-chain-e2e.sh'
       - 'tests/udp-over-http-e2e.py'
 
 concurrency:
@@ -205,6 +207,36 @@ jobs:
 
           echo "✅ HTTP/1.1 / HTTP/2 / HTTP/3 真实 UDP Echo 全部通过"
 
+      - name: 下载官方 NaiveProxy 测试客户端（amd64）
+        if: ${{ matrix.arch == 'amd64' }}
+        run: |
+          set -euo pipefail
+          NAIVE_VERSION="v154.0.8037.49-4"
+          mkdir -p /tmp/naive
+          url="https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-linux-x64.tar.xz"
+          curl -fsSL --retry 3 "$url" -o /tmp/naive.tar.xz
+          tar -xJf /tmp/naive.tar.xz -C /tmp/naive
+          NAIVE_BIN="$(find /tmp/naive -type f -name naive | head -n1)"
+          test -n "$NAIVE_BIN" && test -f "$NAIVE_BIN"
+          chmod +x "$NAIVE_BIN"
+          echo "NAIVE_BIN=$NAIVE_BIN" >> "$GITHUB_ENV"
+          echo "✅ 已准备官方 NaiveProxy ${NAIVE_VERSION}"
+
+      - name: 官方 NaiveProxy 真实链路 E2E（H2/H3 + 双层 QUIC）
+        if: ${{ matrix.arch == 'amd64' }}
+        run: |
+          set -euo pipefail
+          echo "▶ 官方 NaiveProxy HTTP/2 代理"
+          bash tests/official-naive-e2e.sh "./caddy_amd64" "$NAIVE_BIN" h2
+
+          echo "▶ 官方 NaiveProxy HTTP/3 代理"
+          bash tests/official-naive-e2e.sh "./caddy_amd64" "$NAIVE_BIN" h3
+
+          echo "▶ 官方 NaiveProxy 外层 QUIC → CONNECT-UDP → 内层 QUIC"
+          bash tests/official-naive-chain-e2e.sh "./caddy_amd64" "$NAIVE_BIN"
+
+          echo "✅ 三种官方客户端链路均真实收发并通过"
+
       - name: 校验模块、架构并打包
         env:
           UPSTREAM_COMMIT: ${{ needs.check-updates.outputs.upstream_commit }}
@@ -338,7 +370,7 @@ jobs:
           - HTTP/2 Extended CONNECT 流式 UDP
           - HTTP/3 Datagram
           - CONNECT-UDP-BIND：HTTP/1.1 / HTTP/2 支持；HTTP/3 BIND 暂未实现
-          - 真实 E2E：最终 amd64 二进制通过 HTTP/1.1 Upgrade 向 UDP Echo Server 发包并验证原样回包
+          - 真实 E2E：H1/H2/H3 UDP Echo；官方 NaiveProxy H2/H3；官方双层 QUIC-over-CONNECT-UDP 流量及首次握手 MTU 校验
 
           ## 其他内置插件
           - jsonc-adapter
