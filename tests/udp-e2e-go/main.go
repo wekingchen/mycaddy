@@ -97,7 +97,12 @@ https://localhost:%d {
 		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
 			break
 		}
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", httpsPort), 300*time.Millisecond)
+		dialer := &net.Dialer{Timeout: 300 * time.Millisecond}
+		conn, err := tls.DialWithDialer(dialer, "tcp", fmt.Sprintf("127.0.0.1:%d", httpsPort), &tls.Config{
+			InsecureSkipVerify: true,
+			ServerName:         "localhost",
+			NextProtos:         []string{"h2", "http/1.1"},
+		})
 		if err == nil {
 			conn.Close()
 			return cmd, logf
