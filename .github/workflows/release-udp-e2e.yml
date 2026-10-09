@@ -102,7 +102,7 @@ jobs:
           }
           CADDY
 
-          /tmp/release-e2e/caddy_amd64 run --config /tmp/direct.Caddyfile --adapter caddyfile >/tmp/direct-caddy.log 2>&1 &
+          GODEBUG=http2xconnect=1 /tmp/release-e2e/caddy_amd64 run --config /tmp/direct.Caddyfile --adapter caddyfile >/tmp/direct-caddy.log 2>&1 &
           echo $! >/tmp/direct-caddy.pid
 
           python3 - <<'PY'
@@ -197,7 +197,7 @@ jobs:
           }
           CADDY
 
-          /tmp/release-e2e/caddy_amd64 run --config /tmp/chain.Caddyfile --adapter caddyfile >/tmp/chain-caddy.log 2>&1 &
+          GODEBUG=http2xconnect=1 /tmp/release-e2e/caddy_amd64 run --config /tmp/chain.Caddyfile --adapter caddyfile >/tmp/chain-caddy.log 2>&1 &
           CHAIN_CADDY_PID=$!
           sleep 2
           kill -0 "$CHAIN_CADDY_PID"
