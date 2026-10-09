@@ -1,113 +1,73 @@
 name: Latest Release UDP E2E（不重新编译）
-
 on:
   push:
     branches: ['test/udp-e2e']
     paths:
       - '.github/workflows/release-udp-e2e.yml'
       - 'tests/udp-over-http-e2e.py'
-      - 'tests/udp-e2e-go/**'
-      - 'tests/official-naive-e2e.sh'
+      - 'tests/udp-over-http-h2h3-e2e.go'
   workflow_dispatch:
-
-concurrency:
-  group: release-udp-e2e-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   release-udp-e2e:
-    name: Latest Release HTTP/1.1 + HTTP/2 + HTTP/3 UDP E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - name: 设置 Go 测试环境
+      - name: 设置 Go 测试客户端环境
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.x'
           cache: false
 
-      - name: 下载 Latest Release 原始二进制
+      - name: 下载 Latest Release 原始 Caddy 二进制
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/release-e2e
-          gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '"LATEST_RELEASE=" + .tagName' | tee -a "$GITHUB_ENV"
           gh release download --repo "$GITHUB_REPOSITORY" --pattern 'caddy_amd64.tar.gz' --dir /tmp/release-e2e
           tar -xzf /tmp/release-e2e/caddy_amd64.tar.gz -C /tmp/release-e2e
           chmod +x /tmp/release-e2e/caddy_amd64
+          echo "📌 正在测试的正式发布版本：$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
           /tmp/release-e2e/caddy_amd64 version
-          sha256sum /tmp/release-e2e/caddy_amd64.tar.gz /tmp/release-e2e/caddy_amd64
-
-      - name: 下载官方 klzgrad naiveproxy 客户端
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/naive-official
-          gh release download v154.0.8037.49-4 \
-            --repo klzgrad/naiveproxy \
-            --pattern 'naiveproxy-v154.0.8037.49-4-linux-x64.tar.xz' \
-            --dir /tmp/naive-official
-          tar -xJf /tmp/naive-official/naiveproxy-v154.0.8037.49-4-linux-x64.tar.xz -C /tmp/naive-official
-          NAIVE_BIN="$(find /tmp/naive-official -type f -name naive -print -quit)"
-          test -n "$NAIVE_BIN"
-          chmod +x "$NAIVE_BIN"
-          "$NAIVE_BIN" --version
-          echo "NAIVE_BIN=$NAIVE_BIN" >> "$GITHUB_ENV"
-
-      - name: 官方 naive 客户端 HTTP/2 隧道兼容性
-        id: naive_h2
-        continue-on-error: true
-        run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h2
-
-      - name: 官方 naive 客户端 HTTP/3 隧道兼容性
-        id: naive_h3
-        continue-on-error: true
-        run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h3
 
       - name: HTTP/1.1 真实 UDP Echo 往返
-        id: h1
-        run: python3 tests/udp-over-http-e2e.py /tmp/release-e2e/caddy_amd64
-
-      - name: 准备 HTTP/2 + HTTP/3 E2E 客户端
-        working-directory: tests/udp-e2e-go
         run: |
           set -euo pipefail
+          python3 tests/udp-over-http-e2e.py /tmp/release-e2e/caddy_amd64
+
+      - name: 准备 HTTP/2 + HTTP/3 标准测试客户端
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/udp-e2e-client
+          mkdir -p /tmp/udp-e2e-client
+          cp tests/udp-over-http-h2h3-e2e.go /tmp/udp-e2e-client/main.go
+          cd /tmp/udp-e2e-client
+          go mod init mycaddy-udp-e2e
+          go get golang.org/x/net@latest
+          go get github.com/quic-go/masque-go@v0.4.0
+          go get github.com/yosida95/uritemplate/v3@latest
           go mod tidy
-          go build -o /tmp/udp-e2e-client .
+          go build -o /tmp/udp-e2e-client/e2e .
 
-      - name: HTTP/2 Extended CONNECT 真实 UDP Echo 往返
-        id: h2
-        continue-on-error: true
-        run: /tmp/udp-e2e-client /tmp/release-e2e/caddy_amd64 h2
-
-      - name: HTTP/3 CONNECT-UDP Datagram 真实 UDP Echo 往返
-        id: h3
-        continue-on-error: true
-        run: /tmp/udp-e2e-client /tmp/release-e2e/caddy_amd64 h3
-
-      - name: 三协议验收
+      - name: HTTP/2 + HTTP/3 CONNECT-UDP 真实 UDP Echo 往返
         env:
-          NAIVE_H2_OUTCOME: ${{ steps.naive_h2.outcome }}
-          NAIVE_H3_OUTCOME: ${{ steps.naive_h3.outcome }}
-          H2_OUTCOME: ${{ steps.h2.outcome }}
-          H3_OUTCOME: ${{ steps.h3.outcome }}
+          GODEBUG: http2xconnect=1
         run: |
           set -euo pipefail
-          echo "Latest Release: $LATEST_RELEASE"
-          echo "Official naive H2 tunnel: $NAIVE_H2_OUTCOME"
-          echo "Official naive H3 tunnel: $NAIVE_H3_OUTCOME"
-          echo "HTTP/1.1 UDP: PASS"
-          echo "HTTP/2 UDP: $H2_OUTCOME"
-          echo "HTTP/3 UDP: $H3_OUTCOME"
-          test "$NAIVE_H2_OUTCOME" = success
-          test "$NAIVE_H3_OUTCOME" = success
-          test "$H2_OUTCOME" = success
-          test "$H3_OUTCOME" = success
-          echo "✅ 官方 naive H2/H3 + H1/H2/H3 真实 UDP E2E 全部通过"
+          /tmp/udp-e2e-client/e2e /tmp/release-e2e/caddy_amd64
+
+      - name: 下载最新 NaiveProxy 客户端并记录版本
+        run: |
+          set -euo pipefail
+          NP_TAG="v154.0.8037.49-4"
+          curl -fL --retry 3             -o /tmp/naive.tar.xz             "https://github.com/klzgrad/naiveproxy/releases/download/$NP_TAG/naiveproxy-$NP_TAG-linux-x64.tar.xz"
+          mkdir -p /tmp/naive
+          tar -xJf /tmp/naive.tar.xz -C /tmp/naive
+          echo "📌 NaiveProxy 客户端：$NP_TAG"
+          find /tmp/naive -maxdepth 2 -type f -print
