@@ -6,6 +6,7 @@ on:
       - '.github/workflows/release-udp-e2e.yml'
       - 'tests/release-udp-e2e.py'
       - 'tests/release-udp-h3.go'
+      - 'tests/release-udp-h2.go'
   workflow_dispatch:
 
 permissions:
@@ -129,7 +130,12 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          python3 tests/release-udp-e2e.py --protocol h2 --host localhost --port 18443
+          mkdir -p /tmp/h2-e2e
+          cp tests/release-udp-h2.go /tmp/h2-e2e/main.go
+          cd /tmp/h2-e2e
+          go mod init mycaddy-release-h2-e2e
+          go get golang.org/x/net/http2@latest
+          go run . localhost:18443 127.0.0.1:19090
 
       - name: HTTP/3 CONNECT-UDP Datagram → UDP Echo
         id: h3
