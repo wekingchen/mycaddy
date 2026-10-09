@@ -13,7 +13,7 @@ on:
   push:
     branches:
       - main
-      - test/klzgrad-udp-over-http
+      - 'test/**'
     paths:
       - '.github/workflows/build-caddy.yml'
       - 'forwardproxy-overlay/**'
@@ -183,16 +183,63 @@ jobs:
           file "caddy_${{ matrix.arch }}"
           go version -m "caddy_${{ matrix.arch }}" | tee "buildmeta_${{ matrix.arch }}.txt"
 
+          # 所有自定义插件都必须出现在最终 Go build info 中。
+          expected_deps=(
+            'github.com/caddyserver/forwardproxy'
+            'github.com/caddyserver/jsonc-adapter'
+            'github.com/mholt/caddy-l4'
+            'github.com/caddy-dns/cloudflare'
+            'github.com/caddy-dns/tencentcloud'
+            'github.com/caddy-dns/duckdns'
+            'github.com/mholt/caddy-dynamicdns'
+            'github.com/mholt/caddy-events-exec'
+            'github.com/WeidiDeng/caddy-cloudflare-ip'
+            'github.com/xcaddyplugins/caddy-trusted-cloudfront'
+            'github.com/mholt/caddy-webdav'
+            'github.com/imgk/caddy-trojan'
+          )
+          for dep in "${expected_deps[@]}"; do
+            grep -Fq "$dep" "buildmeta_${{ matrix.arch }}.txt" || {
+              echo "❌ 最终二进制缺少依赖：$dep"
+              exit 1
+            }
+          done
+
+          # UDP-over-HTTP 是 forward_proxy 内部 overlay，不会注册成独立 Caddy module。
+          # 因此直接检查最终二进制中的协议/配置特征，确认 overlay 代码确实被链接。
+          strings "caddy_${{ matrix.arch }}" > "strings_${{ matrix.arch }}.txt"
+          for marker in             'udp_uri_template'             'connect-udp'             'Connect-Udp-Bind'             '.well-known/masque/udp/'             'connect-udp-bind over http3 is not supported yet'; do
+            grep -Fq "$marker" "strings_${{ matrix.arch }}.txt" || {
+              echo "❌ 最终二进制缺少 UDP-over-HTTP 特征：$marker"
+              exit 1
+            }
+          done
+
           if [[ "${{ matrix.arch }}" == "amd64" ]]; then
             "./caddy_${{ matrix.arch }}" list-modules | tee "modules_${{ matrix.arch }}.txt"
-            grep -qx 'http.handlers.forward_proxy' "modules_${{ matrix.arch }}.txt"
-            grep -qx 'layer4' "modules_${{ matrix.arch }}.txt"
-            grep -qx 'caddy.listeners.layer4' "modules_${{ matrix.arch }}.txt"
+            expected_modules=(
+              'caddy.adapters.jsonc'
+              'caddy.listeners.layer4'
+              'dns.providers.cloudflare'
+              'dns.providers.tencentcloud'
+              'dns.providers.duckdns'
+              'dynamic_dns'
+              'events.handlers.exec'
+              'http.handlers.forward_proxy'
+              'http.handlers.trojan'
+              'http.handlers.webdav'
+              'http.ip_sources.cloudflare'
+              'http.ip_sources.cloudfront'
+              'trojan'
+            )
+            for module in "${expected_modules[@]}"; do
+              grep -qx "$module" "modules_${{ matrix.arch }}.txt" || {
+                echo "❌ 最终二进制缺少 Caddy module：$module"
+                exit 1
+              }
+            done
           else
-            # x86 Runner 不能直接执行 arm64 二进制；改用 Go build info
-            # 验证关键模块已实际链接进最终产物。
-            grep -q 'github.com/caddyserver/forwardproxy' "buildmeta_${{ matrix.arch }}.txt"
-            grep -q 'github.com/mholt/caddy-l4' "buildmeta_${{ matrix.arch }}.txt"
+            # x86 Runner 不能直接执行 arm64 二进制，保留 build info 作为可下载校验记录。
             cp "buildmeta_${{ matrix.arch }}.txt" "modules_${{ matrix.arch }}.txt"
           fi
 
@@ -202,6 +249,7 @@ jobs:
           Caddy version: $CADDY_VERSION
           UDP-over-HTTP source: imgk/forwardproxy@6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
           QUIC stack: github.com/sagernet/quic-go
+          CONNECT-UDP-BIND: HTTP/1.1 and HTTP/2 supported; HTTP/3 bind is not implemented
           EOF
 
           tar -czf "caddy_${{ matrix.arch }}.tar.gz"             "caddy_${{ matrix.arch }}"             "build-info_${{ matrix.arch }}.txt"
@@ -254,9 +302,10 @@ jobs:
 
           ## UDP-over-HTTP
           - RFC 9298 CONNECT-UDP
-          - HTTP/1.1 / HTTP/2 流式 UDP
+          - HTTP/1.1 Upgrade 流式 UDP
+          - HTTP/2 Extended CONNECT 流式 UDP
           - HTTP/3 Datagram
-          - CONNECT-UDP-BIND（保持 imgk 原实现能力）
+          - CONNECT-UDP-BIND：HTTP/1.1 / HTTP/2 支持；HTTP/3 BIND 暂未实现
 
           ## 其他内置插件
           - jsonc-adapter
