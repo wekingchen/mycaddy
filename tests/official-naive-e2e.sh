@@ -82,6 +82,7 @@ grep -q '^ECHO_READY$' "$TMP/echo.log"
 
 cat >"$TMP/Caddyfile" <<EOF
 {
+    debug
     auto_https disable_redirects
 }
 
