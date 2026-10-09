@@ -19,6 +19,13 @@ on:
       - 'forwardproxy-overlay/udp_over_http.go'
       - 'forwardproxy-overlay/forwardproxy_udp_test.go'
       - 'scripts/apply-forwardproxy-udp.py'
+      - 'scripts/apply-caddy-http3-datagrams.py'
+      - 'tests/udp-over-http-e2e.py'
+      - 'tests/udp-e2e-go/**'
+
+concurrency:
+  group: build-caddy-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -146,7 +153,8 @@ jobs:
           git -C caddy-bbr checkout --detach FETCH_HEAD
 
           git -C caddy-bbr apply "$GITHUB_WORKSPACE/forwardproxy/caddy-sing-quic-bbrv1.patch"
-          echo "✅ 已应用 klzgrad 的 sing-quic BBRv1 Caddy 补丁"
+          python3 "$GITHUB_WORKSPACE/scripts/apply-caddy-http3-datagrams.py" "$GITHUB_WORKSPACE/caddy-bbr"
+          echo "✅ 已应用 klzgrad 的 sing-quic BBRv1 补丁并启用 HTTP/3 Datagram"
 
       - name: 运行 forwardproxy 回归测试
         working-directory: forwardproxy
@@ -173,6 +181,28 @@ jobs:
           export GOARCH=${{ matrix.arch }}
 
           "$(go env GOPATH)/bin/xcaddy" build "$CADDY_VERSION"             --output "caddy_${{ matrix.arch }}"             --replace "github.com/caddyserver/caddy/v2=$GITHUB_WORKSPACE/caddy-bbr"             --with "github.com/caddyserver/forwardproxy=$GITHUB_WORKSPACE/forwardproxy"             --with github.com/caddyserver/jsonc-adapter             --with github.com/mholt/caddy-l4             --with github.com/caddy-dns/cloudflare             --with github.com/caddy-dns/tencentcloud             --with github.com/caddy-dns/duckdns             --with github.com/mholt/caddy-dynamicdns             --with github.com/mholt/caddy-events-exec             --with github.com/WeidiDeng/caddy-cloudflare-ip             --with github.com/xcaddyplugins/caddy-trusted-cloudfront             --with github.com/mholt/caddy-webdav             --with github.com/imgk/caddy-trojan
+
+      - name: 运行真实 UDP-over-HTTP E2E（amd64）
+        if: ${{ matrix.arch == 'amd64' }}
+        run: |
+          set -euo pipefail
+          echo "▶ HTTP/1.1 CONNECT-UDP"
+          python3 tests/udp-over-http-e2e.py "./caddy_amd64"
+
+          echo "▶ 准备 HTTP/2 / HTTP/3 E2E 客户端"
+          (
+            cd tests/udp-e2e-go
+            go mod tidy
+            go build -o /tmp/udp-e2e-client .
+          )
+
+          echo "▶ HTTP/2 Extended CONNECT"
+          /tmp/udp-e2e-client "./caddy_amd64" h2
+
+          echo "▶ HTTP/3 CONNECT-UDP Datagram"
+          /tmp/udp-e2e-client "./caddy_amd64" h3
+
+          echo "✅ HTTP/1.1 / HTTP/2 / HTTP/3 真实 UDP Echo 全部通过"
 
       - name: 校验模块、架构并打包
         env:
@@ -307,6 +337,7 @@ jobs:
           - HTTP/2 Extended CONNECT 流式 UDP
           - HTTP/3 Datagram
           - CONNECT-UDP-BIND：HTTP/1.1 / HTTP/2 支持；HTTP/3 BIND 暂未实现
+          - 真实 E2E：最终 amd64 二进制必须分别通过 HTTP/1.1 Upgrade、HTTP/2 Extended CONNECT、HTTP/3 Datagram 向 UDP Echo Server 发包并验证原样回包
 
           ## 其他内置插件
           - jsonc-adapter
