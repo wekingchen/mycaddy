@@ -20,6 +20,8 @@ on:
       - 'forwardproxy-overlay/forwardproxy_udp_test.go'
       - 'scripts/apply-forwardproxy-udp.py'
       - 'tests/udp-over-http-e2e.py'
+      - 'tests/udp-e2e-go/**'
+      - 'tests/udp-over-http-e2e.py'
 
 permissions:
   contents: write
