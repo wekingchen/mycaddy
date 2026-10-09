@@ -29,7 +29,6 @@ import (
 	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/quic-go/quicvarint"
 	"go.uber.org/zap"
-	"golang.org/x/net/proxy"
 )
 
 const (
@@ -46,6 +45,37 @@ var (
 	CapsuleProtocolHeaderValue string
 	ConnectUDPBindHeaderValue  string
 )
+
+// udpExactReader mirrors the strict capsule payload reader used by quic-go.
+// SagerNet's current http3 package doesn't export ParseCapsule, so the small
+// RFC 9297 framing helper lives in this overlay instead of pulling a second
+// quic-go implementation into the binary.
+type udpExactReader struct {
+	R io.LimitedReader
+}
+
+func (r *udpExactReader) Read(b []byte) (int, error) {
+	n, err := r.R.Read(b)
+	if err == io.EOF && r.R.N > 0 {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+func parseUDPCapsule(r quicvarint.Reader) (uint64, io.Reader, error) {
+	capsuleType, err := quicvarint.Read(r)
+	if err != nil {
+		return 0, nil, err
+	}
+	length, err := quicvarint.Read(r)
+	if err != nil {
+		if err == io.EOF {
+			return 0, nil, io.ErrUnexpectedEOF
+		}
+		return 0, nil, err
+	}
+	return capsuleType, &udpExactReader{R: io.LimitedReader{R: r, N: int64(length)}}, nil
+}
 
 func init() {
 	str, err := httpsfv.Marshal(httpsfv.NewItem(true))
@@ -792,7 +822,7 @@ func (srv udpProxyServer) HandlePacket(str http3.Stream, req Request, rc *net.UD
 	// discard all capsules sent on the request stream
 	if err := func(str quicvarint.Reader) error {
 		for {
-			_, r, err := http3.ParseCapsule(str)
+			_, r, err := parseUDPCapsule(str)
 			if err != nil {
 				return err
 			}
