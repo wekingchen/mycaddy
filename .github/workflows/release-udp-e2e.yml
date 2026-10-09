@@ -39,6 +39,29 @@ jobs:
           /tmp/release-e2e/caddy_amd64 version
           sha256sum /tmp/release-e2e/caddy_amd64.tar.gz /tmp/release-e2e/caddy_amd64
 
+      - name: 下载官方 klzgrad naiveproxy 客户端
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/naive-official
+          gh release download v154.0.8037.49-4 \
+            --repo klzgrad/naiveproxy \
+            --pattern 'naiveproxy-v154.0.8037.49-4-linux-x64.tar.xz' \
+            --dir /tmp/naive-official
+          tar -xJf /tmp/naive-official/naiveproxy-v154.0.8037.49-4-linux-x64.tar.xz -C /tmp/naive-official
+          NAIVE_BIN="$(find /tmp/naive-official -type f -name naive -print -quit)"
+          test -n "$NAIVE_BIN"
+          chmod +x "$NAIVE_BIN"
+          "$NAIVE_BIN" --version
+          echo "NAIVE_BIN=$NAIVE_BIN" >> "$GITHUB_ENV"
+
+      - name: 官方 naive 客户端 HTTP/2 隧道兼容性
+        run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h2
+
+      - name: 官方 naive 客户端 HTTP/3 隧道兼容性
+        run: bash tests/official-naive-e2e.sh /tmp/release-e2e/caddy_amd64 "$NAIVE_BIN" h3
+
       - name: HTTP/1.1 真实 UDP Echo 往返
         id: h1
         run: python3 tests/udp-over-http-e2e.py /tmp/release-e2e/caddy_amd64
