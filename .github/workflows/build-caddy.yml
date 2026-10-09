@@ -19,6 +19,7 @@ on:
       - 'forwardproxy-overlay/udp_over_http.go'
       - 'forwardproxy-overlay/forwardproxy_udp_test.go'
       - 'scripts/apply-forwardproxy-udp.py'
+      - 'scripts/apply-caddy-http3-datagrams.py'
       - 'tests/udp-over-http-e2e.py'
       - 'tests/udp-e2e-go/**'
       - 'tests/udp-over-http-e2e.py'
@@ -153,7 +154,8 @@ jobs:
           git -C caddy-bbr checkout --detach FETCH_HEAD
 
           git -C caddy-bbr apply "$GITHUB_WORKSPACE/forwardproxy/caddy-sing-quic-bbrv1.patch"
-          echo "✅ 已应用 klzgrad 的 sing-quic BBRv1 Caddy 补丁"
+          python3 "$GITHUB_WORKSPACE/scripts/apply-caddy-http3-datagrams.py" "$GITHUB_WORKSPACE/caddy-bbr"
+          echo "✅ 已应用 klzgrad 的 sing-quic BBRv1 补丁并启用 HTTP/3 Datagram"
 
       - name: 运行 forwardproxy 回归测试
         working-directory: forwardproxy
