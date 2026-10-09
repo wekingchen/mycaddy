@@ -201,12 +201,6 @@ jobs:
                   format json
               }
 
-              @naive_preamble {
-                  method GET
-                  path /
-              }
-              respond @naive_preamble 204
-
               forward_proxy {
                   ports 19444
                   acl {
@@ -216,12 +210,6 @@ jobs:
           }
           :19444, inner.test:19444 {
               tls /tmp/e2e.crt /tmp/e2e.key
-              @naive_preamble {
-                  method GET
-                  path /
-              }
-              respond @naive_preamble 204
-
               @naive_preamble {
                   method GET
                   path /
