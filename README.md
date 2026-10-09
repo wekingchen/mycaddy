@@ -90,7 +90,8 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 7. 在 patched Caddy + SagerNet QUIC 环境下运行 `go test ./...`。
 8. 使用 xcaddy 加入全部插件，分别编译 `linux/amd64` 和 `linux/arm64`。
 9. 对最终二进制做功能校验。
-10. 两个架构全部成功后才发布 Release。
+10. 使用最终 amd64 Caddy 二进制运行真实 UDP-over-HTTP E2E：客户端经 HTTP/1.1 Upgrade 进入 Caddy，向本机 UDP Echo Server 发包并要求收到完全相同的回包。
+11. 两个架构和 E2E 全部成功后才发布 Release。
 
 手动运行时可使用 `force_build=true` 强制重新构建当前上游版本。
 
@@ -118,6 +119,23 @@ connect-udp-bind over http3 is not supported yet
 ```
 
 这意味着 UDP overlay 如果没有真正进入最终二进制，构建会直接失败，不会继续发布 Release。
+
+此外，amd64 会进一步运行 `tests/udp-over-http-e2e.py`。这个测试启动**最终构建出来的 Caddy 可执行文件**和真实 UDP socket，不调用 forwardproxy 内部函数：
+
+```text
+测试客户端
+  │ HTTP/1.1 Upgrade: connect-udp
+  ▼
+最终 caddy_amd64
+  │ UDP
+  ▼
+127.0.0.1 UDP Echo Server
+  │ 原样回包
+  ▼
+最终 caddy_amd64 → 测试客户端
+```
+
+测试要求 HTTP 返回 `101 Switching Protocols`，并且 UDP Echo Server 实际收到 payload、回包后客户端收到完全相同的 payload。
 
 ## 下载与使用
 
@@ -216,5 +234,8 @@ go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 - amd64：回归测试、编译、模块校验、Artifact、Release 均成功
 - arm64：回归测试、编译、静态模块校验、Artifact、Release 均成功
 - 正式 Release：`v2.11.7-20261009-002817`
+- 已直接取 #704 正式 amd64 Artifact 做真实 UDP 回环 E2E：`mycaddy-real-udp-e2e-20261009` 经 Caddy 发往 UDP Echo Server，并原样返回，结果 `E2E_RESULT=PASS`
+
+真实 E2E 当前覆盖 **HTTP/1.1 Upgrade → UDP**。HTTP/2 Extended CONNECT 与 HTTP/3 Datagram 目前仍由回归测试和代码/二进制特征校验覆盖，不能把它们说成已经做过同等的真实网络 E2E。
 
 后续版本以 Releases 和对应构建记录为准。
