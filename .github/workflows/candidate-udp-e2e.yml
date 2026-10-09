@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/release-e2e
-          RUN_ID=37873089934
+          RUN_ID=37875213725
           for i in $(seq 1 120); do
             state="$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion --jq '[.status,.conclusion] | @tsv')"
             if [[ "$state" == *completed* ]]; then
@@ -270,8 +270,14 @@ jobs:
           kill "$CHAIN_CADDY_PID" 2>/dev/null || true
           wait "$CHAIN_CADDY_PID" 2>/dev/null || true
 
-          grep -F '.well-known/masque/udp/inner.test/19444/' /tmp/outer-access.log
-          grep -F '"proto":"HTTP/3.0"' /tmp/outer-access.log
+          # Caddy's access logger records Extended CONNECT `proto=connect-udp`
+          # and authority as `uri`; the MASQUE path is not exposed in request.uri.
+          # Validate the CONNECT-UDP request actually hit the outer proxy.
+          grep -F '"proto":"connect-udp"' /tmp/outer-access.log
+          grep -F '"status":200' /tmp/outer-access.log
+          # Prove a datagram traversed the server, not just a 200 handshake.
+          grep -F 'H3 CONNECT-UDP UDP target packet sent' /tmp/chain-caddy.log
+          grep -F 'H3 CONNECT-UDP UDP target packet received' /tmp/chain-caddy.log
 
           echo "NAIVE_OFFICIAL_CLIENT_CONNECT_UDP_CHAIN=PASS"
 
