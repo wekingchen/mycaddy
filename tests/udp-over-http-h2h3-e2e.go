@@ -222,11 +222,21 @@ https://localhost:%d {
 	if err := waitTCP(cmd); err != nil {
 		logf.Sync(); b,_ := os.ReadFile(logPath); panic(fmt.Sprintf("%v\n--- Caddy log ---\n%s",err,b))
 	}
+	var failures []string
 	if err := testH2(); err != nil {
-		logf.Sync(); b,_ := os.ReadFile(logPath); panic(fmt.Sprintf("%v\n--- Caddy log ---\n%s",err,b))
+		fmt.Printf("HTTP2_E2E_RESULT=FAIL: %v\n", err)
+		failures = append(failures, "HTTP/2: "+err.Error())
 	}
 	if err := testH3(); err != nil {
-		logf.Sync(); b,_ := os.ReadFile(logPath); panic(fmt.Sprintf("%v\n--- Caddy log ---\n%s",err,b))
+		fmt.Printf("HTTP3_E2E_RESULT=FAIL: %v\n", err)
+		failures = append(failures, "HTTP/3: "+err.Error())
+	}
+	if len(failures) > 0 {
+		_ = logf.Sync()
+		b, _ := os.ReadFile(logPath)
+		fmt.Printf("--- Caddy log ---\n%s\n", b)
+		for _, failure := range failures { fmt.Fprintln(os.Stderr, failure) }
+		os.Exit(1)
 	}
 	fmt.Println("H2_H3_E2E_RESULT=PASS")
 }
