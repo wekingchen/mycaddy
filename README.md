@@ -67,11 +67,23 @@ GODEBUG=http2xconnect=1 ./caddy_amd64 run --config Caddyfile
 
 systemd 部署时可以设置 `Environment=GODEBUG=http2xconnect=1`。这只用于启用 HTTP/2 Extended CONNECT；HTTP/1.1 和 HTTP/3 不依赖该开关。测试工作流对 H2 也显式设置此环境，避免把受限配置误判成协议代码故障。
 
-### QUIC 的 MTU 限制
+### QUIC 的 MTU 限制与双层代理配置
 
-NaiveProxy 的双层 QUIC 代理需要把内层 QUIC 包放入外层 HTTP/3 Datagram。Caddy 默认的 1200 字节 QUIC 初始包太小，实际会出现 `DATAGRAM frame too large`，导致首次握手超时。本项目通过严格的源码补丁将外层 QUIC 初始包容量提高至 **1452 字节**，以支持常见的 **1500 MTU** 链路，并由真实的官方客户端 E2E 检验。
+NaiveProxy 的双层 QUIC 需要让**外层 HTTP/3 Datagram**承载**内层 QUIC 数据包**。把所有 Caddy 的 QUIC 初始包一起调大不是正确办法：内层也会发出更大的包，外层仍装不下。
 
-**注意：**嵌套 QUIC 会增加协议封装开销。低于常见 1500 MTU 的网络（例如某些隧道、VPN 或特殊移动网络）不能仅依赖此配置保证无分片运行，需要额外的路径 MTU 验证。项目不会把一个本地 Runner 的通过结果描述成任意网络条件都能保证通过。
+因此本项目默认保留 Caddy 原本的 **1200 字节**，只允许在**外层代理的 Caddy 进程**显式设置 `MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452`（面向常见 1500 MTU 网络）：
+
+```bash
+# 外层代理进程（负责 CONNECT-UDP 封装）
+MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452 ./caddy_amd64 run --config outer.Caddyfile
+
+# 内层代理进程（保持默认 1200）
+./caddy_amd64 run --config inner.Caddyfile
+```
+
+两层可以使用**同一份 Caddy 二进制**，但在同一主机测试时采用独立进程；通常实际部署时它们位于不同服务器。只有外层需要调整，内层不需要。该参数只接受 1200–1452 的整数值，非法数值会使启动失败，避免无意改变系统默认行为。
+
+**注意：**低 MTU 网络（例如某些 VPN、移动网络）不一定能承载 1452 字节的外层 QUIC 包。此方案针对典型 1500 MTU 的链路，实际网络仍需验证，不承诺所有路径均无分片。官方 NaiveProxy E2E 会检查是否发生 `DATAGRAM frame too large` 和内层首次握手超时。
 
 ## 内置插件
 
