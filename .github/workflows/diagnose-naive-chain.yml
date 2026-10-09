@@ -59,7 +59,7 @@ jobs:
           ORIGIN_PID=$!
 
           openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 -keyout /tmp/chain.key -out /tmp/chain.crt -subj '/CN=outer.test' -addext 'subjectAltName=DNS:outer.test,DNS:inner.test,IP:127.0.0.1' >/dev/null 2>&1
-          cat >/tmp/chain.Caddyfile <<'CADDY'
+          cat >/tmp/outer.Caddyfile <<'CADDY'
           {
               admin off
               debug
@@ -87,6 +87,16 @@ jobs:
                   }
               }
           }
+          CADDY
+          cat >/tmp/inner.Caddyfile <<'CADDY'
+          {
+              admin off
+              debug
+              auto_https disable_redirects
+              servers {
+                  protocols h1 h2 h3
+              }
+          }
           :19444, inner.test:19444 {
               tls /tmp/chain.crt /tmp/chain.key
               @naive_preamble {
@@ -103,16 +113,16 @@ jobs:
               }
           }
           CADDY
-
-          mkdir -p /tmp/chain-data /tmp/chain-config
-          GODEBUG=http2xconnect=1 XDG_DATA_HOME=/tmp/chain-data XDG_CONFIG_HOME=/tmp/chain-config /tmp/release-e2e/caddy_amd64 run --config /tmp/chain.Caddyfile --adapter caddyfile >/tmp/chain-caddy.log 2>&1 &
+          mkdir -p /tmp/chain-data /tmp/chain-config /tmp/inner-data /tmp/inner-config
+          GODEBUG=http2xconnect=1 XDG_DATA_HOME=/tmp/inner-data XDG_CONFIG_HOME=/tmp/inner-config /tmp/release-e2e/caddy_amd64 run --config /tmp/inner.Caddyfile --adapter caddyfile >/tmp/inner-caddy.log 2>&1 &
+          INNER_CADDY_PID=$!
+          MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452 GODEBUG=http2xconnect=1 XDG_DATA_HOME=/tmp/chain-data XDG_CONFIG_HOME=/tmp/chain-config /tmp/release-e2e/caddy_amd64 run --config /tmp/outer.Caddyfile --adapter caddyfile >/tmp/chain-caddy.log 2>&1 &
           CHAIN_CADDY_PID=$!
           sleep 2
           kill -0 "$CHAIN_CADDY_PID"
-          CHAIN_CA=/tmp/chain.crt
-          test -s "$CHAIN_CA"
-
+          kill -0 "$INNER_CADDY_PID"
           echo "$CHAIN_CADDY_PID" > /tmp/chain-caddy.pid
+          echo "$INNER_CADDY_PID" > /tmp/inner-caddy.pid
           echo "$ORIGIN_PID" > /tmp/origin.pid
       - name: 分别测试 outer、inner、chain 并保存 Chromium NetLog
         run: |
@@ -177,9 +187,10 @@ jobs:
             /tmp/naive-*.log
             /tmp/naive-*-netlog.json
             /tmp/chain-caddy.log
+            /tmp/inner-caddy.log
             /tmp/outer-access.log
           retention-days: 3
       - name: 清理
         if: always()
         run: |
-          for f in /tmp/chain-caddy.pid /tmp/origin.pid; do if [[ -f "$f" ]]; then kill "$(cat "$f")" 2>/dev/null || true; fi; done
+          for f in /tmp/chain-caddy.pid /tmp/inner-caddy.pid /tmp/origin.pid; do if [[ -f "$f" ]]; then kill "$(cat "$f")" 2>/dev/null || true; fi; done
