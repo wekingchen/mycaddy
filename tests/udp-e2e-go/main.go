@@ -34,16 +34,19 @@ func fail(format string, args ...any) {
 	os.Exit(1)
 }
 
-func startUDPEcho(port int) (<-chan error, <-chan []byte) {
+func startUDPEcho(port int) (<-chan error, <-chan []byte, <-chan struct{}) {
 	errc := make(chan error, 1)
 	rxc := make(chan []byte, 1)
+	ready := make(chan struct{})
 	go func() {
 		pc, err := net.ListenPacket("udp4", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			errc <- err
+			close(ready)
 			return
 		}
 		defer pc.Close()
+		close(ready)
 		_ = pc.SetDeadline(time.Now().Add(20 * time.Second))
 		buf := make([]byte, 65535)
 		n, addr, err := pc.ReadFrom(buf)
@@ -59,7 +62,7 @@ func startUDPEcho(port int) (<-chan error, <-chan []byte) {
 		}
 		errc <- nil
 	}()
-	return errc, rxc
+	return errc, rxc, ready
 }
 
 func startCaddy(caddy, dir string, httpsPort, udpPort int) (*exec.Cmd, *os.File) {
@@ -349,7 +352,12 @@ func main() {
 	if _, err := os.Stat(caddy); err != nil {
 		fail("Caddy not found: %v", err)
 	}
-	errc, rxc := startUDPEcho(udpPort)
+	errc, rxc, ready := startUDPEcho(udpPort)
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		fail("UDP echo server did not become ready")
+	}
 	dir, err := os.MkdirTemp("", "mycaddy-"+proto+"-e2e-")
 	if err != nil {
 		fail("temp dir: %v", err)
