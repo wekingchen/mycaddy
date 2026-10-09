@@ -55,11 +55,13 @@ func startUDPEcho(port int) (<-chan error, <-chan []byte, <-chan struct{}) {
 			return
 		}
 		got := append([]byte(nil), buf[:n]...)
+		fmt.Printf("UDP_ECHO_SERVER_RX port=%d payload=%q\n", port, got)
 		rxc <- got
 		if _, err := pc.WriteTo(got, addr); err != nil {
 			errc <- err
 			return
 		}
+		fmt.Printf("UDP_ECHO_SERVER_TX port=%d payload=%q\n", port, got)
 		errc <- nil
 	}()
 	return errc, rxc, ready
