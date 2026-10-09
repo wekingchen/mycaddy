@@ -175,7 +175,7 @@ jobs:
           kill "$(cat /tmp/direct-caddy.pid)" || true
           wait "$(cat /tmp/direct-caddy.pid)" 2>/dev/null || true
 
-          echo '127.0.0.1 outer.localhost inner.localhost' | sudo tee -a /etc/hosts >/dev/null
+          echo '127.0.0.1 outer.test inner.test' | sudo tee -a /etc/hosts >/dev/null
           mkdir -p /tmp/origin
           printf '%s\n' 'naiveproxy-connect-udp-real-chain-ok' >/tmp/origin/marker.txt
           python3 -m http.server 18081 --bind 127.0.0.1 --directory /tmp/origin >/tmp/origin.log 2>&1 &
@@ -189,7 +189,7 @@ jobs:
                   protocols h1 h2 h3
               }
           }
-          :19443, outer.localhost:19443 {
+          :19443, outer.test:19443 {
               tls internal
               @naive_preamble {
                   method GET
@@ -208,7 +208,7 @@ jobs:
                   }
               }
           }
-          :19444, inner.localhost:19444 {
+          :19444, inner.test:19444 {
               tls internal
               @naive_preamble {
                   method GET
@@ -236,8 +236,8 @@ jobs:
           cat >/tmp/naive-config.json <<'JSON'
           {
             "listen": "socks://127.0.0.1:11080",
-            "proxy": "quic://outer.localhost:19443,quic://inner.localhost:19444",
-            "host-resolver-rules": "MAP inner.localhost 127.0.0.1, MAP outer.localhost 127.0.0.1",
+            "proxy": "quic://outer.test:19443,quic://inner.test:19444",
+            "host-resolver-rules": "MAP inner.test 127.0.0.1, MAP outer.test 127.0.0.1",
             "log": ""
           }
           JSON
@@ -268,7 +268,7 @@ jobs:
           kill "$CHAIN_CADDY_PID" 2>/dev/null || true
           wait "$CHAIN_CADDY_PID" 2>/dev/null || true
 
-          grep -F '.well-known/masque/udp/inner.localhost/19444/' /tmp/outer-access.log
+          grep -F '.well-known/masque/udp/inner.test/19444/' /tmp/outer-access.log
           grep -F '"proto":"HTTP/3.0"' /tmp/outer-access.log
 
           echo "NAIVE_OFFICIAL_CLIENT_CONNECT_UDP_CHAIN=PASS"
