@@ -181,11 +181,20 @@ jobs:
           set -euo pipefail
 
           file "caddy_${{ matrix.arch }}"
-          "./caddy_${{ matrix.arch }}" list-modules | tee "modules_${{ matrix.arch }}.txt"
+          go version -m "caddy_${{ matrix.arch }}" | tee "buildmeta_${{ matrix.arch }}.txt"
 
-          grep -qx 'http.handlers.forward_proxy' "modules_${{ matrix.arch }}.txt"
-          grep -qx 'layer4' "modules_${{ matrix.arch }}.txt"
-          grep -qx 'caddy.listeners.layer4' "modules_${{ matrix.arch }}.txt"
+          if [[ "${{ matrix.arch }}" == "amd64" ]]; then
+            "./caddy_${{ matrix.arch }}" list-modules | tee "modules_${{ matrix.arch }}.txt"
+            grep -qx 'http.handlers.forward_proxy' "modules_${{ matrix.arch }}.txt"
+            grep -qx 'layer4' "modules_${{ matrix.arch }}.txt"
+            grep -qx 'caddy.listeners.layer4' "modules_${{ matrix.arch }}.txt"
+          else
+            # x86 Runner 不能直接执行 arm64 二进制；改用 Go build info
+            # 验证关键模块已实际链接进最终产物。
+            grep -q 'github.com/caddyserver/forwardproxy' "buildmeta_${{ matrix.arch }}.txt"
+            grep -q 'github.com/mholt/caddy-l4' "buildmeta_${{ matrix.arch }}.txt"
+            cp "buildmeta_${{ matrix.arch }}.txt" "modules_${{ matrix.arch }}.txt"
+          fi
 
           cat > "build-info_${{ matrix.arch }}.txt" <<EOF
           klzgrad/forwardproxy branch: naive
