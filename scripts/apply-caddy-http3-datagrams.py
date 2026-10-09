@@ -3,7 +3,7 @@
 
 Caddy creates the QUIC listener itself, so RFC 9297 / RFC 9298 needs both:
 1. QUIC transport datagrams (quic.Config.EnableDatagrams)
-2. HTTP/3 datagram SETTINGS (http3.Server.EnableDatagrams)\n3. Sufficient packet capacity for NaiveProxy nested QUIC: 1200-byte outer\n   QUIC packets only allow ~1163 bytes of HTTP Datagrams, too small for\n   inner QUIC handshake packets. A 1400-byte outer packet supports a\n   typical 1500-MTU path; reduced-MTU paths need separate consideration.
+2. HTTP/3 datagram SETTINGS (http3.Server.EnableDatagrams)\n3. Sufficient packet capacity for NaiveProxy nested QUIC: 1200-byte outer\n   QUIC packets only allow ~1163 bytes of HTTP Datagrams, too small for\n   inner QUIC handshake packets. A 1452-byte outer packet supports a\n   typical 1500-MTU path; reduced-MTU paths need separate consideration.
 
 The replacements are strict so an upstream layout change fails the build rather
 than silently producing a Caddy that advertises UDP-over-HTTP but cannot use H3.
@@ -36,7 +36,7 @@ def main() -> int:
 				Tracer:            h3qlog.DefaultConnectionTracer,
 			},""",
         """			&quic.Config{
-				InitialPacketSize: 1400,
+				InitialPacketSize: 1452,
 				Allow0RTT:         allow0rtt,
 				EnableDatagrams:   true,
 				Tracer:            h3qlog.DefaultConnectionTracer,
@@ -57,7 +57,7 @@ def main() -> int:
 			EnableDatagrams: true,""",
     )
 
-    print("Enabled QUIC + HTTP/3 Datagrams, 1400-byte initial QUIC packet for nested QUIC")
+    print("Enabled QUIC + HTTP/3 Datagrams, 1452-byte initial QUIC packet for nested QUIC")
     return 0
 
 
