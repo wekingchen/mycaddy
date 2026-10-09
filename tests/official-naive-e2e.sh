@@ -88,6 +88,13 @@ cat >"$TMP/Caddyfile" <<EOF
 
 https://localhost:$CADDY_PORT {
     tls internal
+
+    @naive_preamble {
+        method GET
+        path /
+    }
+    respond @naive_preamble 204
+
     forward_proxy {
         ports $TARGET_PORT
         acl {
