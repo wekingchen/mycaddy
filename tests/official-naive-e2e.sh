@@ -112,7 +112,7 @@ cat >"$TMP/Caddyfile" <<EOF
     auto_https disable_redirects
 }
 
-https://localhost:$CADDY_PORT {
+:$CADDY_PORT, localhost:$CADDY_PORT {
     tls internal
     log
 
