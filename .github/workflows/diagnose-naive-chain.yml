@@ -22,7 +22,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/release-e2e
-          gh run download 37873089934 --repo "$GITHUB_REPOSITORY" --name caddy-amd64 --dir /tmp/release-e2e
+          RUN_ID=37875213725
+          for i in $(seq 1 120); do
+            state="$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion --jq '[.status,.conclusion]|@tsv')"
+            if [[ "$state" == *completed* ]]; then
+              [[ "$state" == *success* ]] || { echo "Candidate build failed: $state"; exit 1; }
+              break
+            fi
+            sleep 10
+          done
+          [[ "$state" == *success* ]] || { echo "Candidate build still pending"; exit 1; }
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name caddy-amd64 --dir /tmp/release-e2e
           tar -xzf /tmp/release-e2e/caddy_amd64.tar.gz -C /tmp/release-e2e
           chmod +x /tmp/release-e2e/caddy_amd64
       - name: 下载官方 NaiveProxy 客户端
