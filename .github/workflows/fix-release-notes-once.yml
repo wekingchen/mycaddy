@@ -1,0 +1,58 @@
+name: 一次性修正 Release 说明
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-release-notes-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-release-notes:
+    name: 修正当前 Release 说明
+    runs-on: ubuntu-latest
+    steps:
+      - name: 修正并校验 Release 说明
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v2.11.7-20261009-002817"
+          cat > release_notes.md <<'EOF'
+          🚀 **NaiveProxy Caddy — v2.11.7-20261009-002817**
+
+          ## 核心来源
+          - klzgrad/forwardproxy 分支：naive
+          - 上游提交：c096d6a00cb28e019cc1995b04bdc6a9311d8024
+          - Caddy：v2.11.7
+          - QUIC：SagerNet quic-go + klzgrad sing-quic BBRv1
+          - UDP-over-HTTP：基于 imgk/forwardproxy@6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec 的独立 overlay
+
+          ## UDP-over-HTTP
+          - RFC 9298 CONNECT-UDP
+          - HTTP/1.1 / HTTP/2 流式 UDP
+          - HTTP/3 Datagram
+          - CONNECT-UDP-BIND（保持 imgk 原实现能力）
+
+          ## 其他内置插件
+          - jsonc-adapter
+          - caddy-l4
+          - Cloudflare / Tencent Cloud / DuckDNS
+          - caddy-dynamicdns
+          - caddy-events-exec
+          - caddy-cloudflare-ip
+          - caddy-trusted-cloudfront
+          - caddy-webdav
+          - caddy-trojan
+
+          ## 构建策略
+          每日检查 klzgrad/forwardproxy:naive。检测到新提交后，直接以最新上游为底座重新应用 UDP overlay；若上游结构变化造成 overlay 无法安全应用，构建会明确失败，不会静默停留在旧源码。
+          EOF
+
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release_notes.md
+          BODY="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body')"
+          grep -Fq 'klzgrad/forwardproxy 分支：naive' <<<"$BODY"
+          grep -Fq 'imgk/forwardproxy@6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec' <<<"$BODY"
+          echo "✅ Release 说明已修正并校验"
