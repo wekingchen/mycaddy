@@ -48,9 +48,9 @@ jobs:
           python3 -m http.server 18081 --bind 127.0.0.1 --directory /tmp/origin >/tmp/origin.log 2>&1 &
           ORIGIN_PID=$!
 
+          openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 -keyout /tmp/chain.key -out /tmp/chain.crt -subj '/CN=outer.test' -addext 'subjectAltName=DNS:outer.test,DNS:inner.test,IP:127.0.0.1' >/dev/null 2>&1
           cat >/tmp/chain.Caddyfile <<'CADDY'
           {
-              local_certs
               admin off
               debug
               auto_https disable_redirects
@@ -59,7 +59,7 @@ jobs:
               }
           }
           :19443, outer.test:19443 {
-              tls internal
+              tls /tmp/chain.crt /tmp/chain.key
               @naive_preamble {
                   method GET
                   path /
@@ -78,7 +78,7 @@ jobs:
               }
           }
           :19444, inner.test:19444 {
-              tls internal
+              tls /tmp/chain.crt /tmp/chain.key
               @naive_preamble {
                   method GET
                   path /
@@ -99,7 +99,7 @@ jobs:
           CHAIN_CADDY_PID=$!
           sleep 2
           kill -0 "$CHAIN_CADDY_PID"
-          CHAIN_CA=/tmp/chain-data/caddy/pki/authorities/local/root.crt
+          CHAIN_CA=/tmp/chain.crt
           test -s "$CHAIN_CA"
 
           echo "$CHAIN_CADDY_PID" > /tmp/chain-caddy.pid
@@ -125,7 +125,7 @@ jobs:
               "log":"","log-net-log":f"/tmp/naive-{mode}-netlog.json",
           },open(f"/tmp/naive-{mode}.json","w"))
           PY
-            SSL_CERT_FILE=/tmp/chain-data/caddy/pki/authorities/local/root.crt "$NAIVE_BIN" "/tmp/naive-$mode.json" >"/tmp/naive-$mode.log" 2>&1 &
+            SSL_CERT_FILE=/tmp/chain.crt "$NAIVE_BIN" "/tmp/naive-$mode.json" >"/tmp/naive-$mode.log" 2>&1 &
             pid=$!
             for i in $(seq 1 50); do if bash -c "echo >/dev/tcp/127.0.0.1/11080" 2>/dev/null; then break; fi; sleep .2; done
             if [[ "$mode" = outer ]]; then
