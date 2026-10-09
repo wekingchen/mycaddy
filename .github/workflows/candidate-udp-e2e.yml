@@ -258,17 +258,19 @@ jobs:
           body="$(curl -fsS --max-time 15 --socks5-hostname 127.0.0.1:11080 http://127.0.0.1:18081/marker.txt)"
           test "$body" = "naiveproxy-connect-udp-real-chain-ok"
 
-          kill "$NAIVE_PID" || true
+          # 先结束客户端，再停止 Caddy，让长连接 CONNECT-UDP handler
+          # 完整返回并把 access log 刷入文件，然后再做协议证据校验。
+          kill "$NAIVE_PID" 2>/dev/null || true
           wait "$NAIVE_PID" 2>/dev/null || true
-          sleep 1
+          kill "$CHAIN_CADDY_PID" 2>/dev/null || true
+          wait "$CHAIN_CADDY_PID" 2>/dev/null || true
 
           grep -F '.well-known/masque/udp/inner.test/19444/' /tmp/outer-access.log
           grep -F '"proto":"HTTP/3.0"' /tmp/outer-access.log
 
           echo "NAIVE_OFFICIAL_CLIENT_CONNECT_UDP_CHAIN=PASS"
 
-          kill "$CHAIN_CADDY_PID" "$ORIGIN_PID" || true
-          wait "$CHAIN_CADDY_PID" 2>/dev/null || true
+          kill "$ORIGIN_PID" 2>/dev/null || true
           wait "$ORIGIN_PID" 2>/dev/null || true
 
 
