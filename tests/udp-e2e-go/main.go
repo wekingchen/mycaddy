@@ -289,40 +289,82 @@ func runH2(port int) {
 }
 
 func runH3(port int) {
-	tr := &http3.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true, ServerName: "localhost"},
-		QUICConfig:      &quic.Config{EnableDatagrams: true},
+	packetConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		fail("HTTP/3 UDP socket: %v", err)
+	}
+	qt := &quic.Transport{Conn: packetConn}
+	defer qt.Close()
+
+	remote, err := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		fail("HTTP/3 resolve server: %v", err)
+	}
+	tlsConf := &tls.Config{
+		InsecureSkipVerify: true,
+		ServerName:         "localhost",
+		NextProtos:         []string{http3.NextProtoH3},
+	}
+	qconf := &quic.Config{EnableDatagrams: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	conn, err := qt.Dial(ctx, remote, tlsConf, qconf)
+	if err != nil {
+		fail("HTTP/3 QUIC dial: %v", err)
+	}
+	defer conn.CloseWithError(0, "")
+
+	h3transport := &http3.Transport{
+		TLSClientConfig: tlsConf,
+		QUICConfig:      qconf,
 		EnableDatagrams: true,
 	}
-	defer tr.Close()
+	cc := h3transport.NewClientConn(conn)
+
+	select {
+	case <-cc.ReceivedSettings():
+	case <-ctx.Done():
+		fail("HTTP/3 server settings timeout: %v", ctx.Err())
+	}
+	settings := cc.Settings()
+	if !settings.EnableExtendedConnect {
+		fail("HTTP/3 server didn't enable Extended CONNECT")
+	}
+	if !settings.EnableDatagrams {
+		fail("HTTP/3 server didn't enable HTTP Datagrams")
+	}
+
+	stream, err := cc.OpenRequestStream(ctx)
+	if err != nil {
+		fail("HTTP/3 open request stream: %v", err)
+	}
+	defer stream.Close()
 
 	url := fmt.Sprintf("https://localhost:%d/.well-known/masque/udp/127.0.0.1/19093/", port)
-	req, err := http.NewRequest(http.MethodConnect, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodConnect, url, nil)
 	if err != nil {
 		fail("create HTTP/3 CONNECT request: %v", err)
 	}
 	req.Proto = "connect-udp"
 	req.Header.Set("Capsule-Protocol", "?1")
 
-	resp, err := tr.RoundTrip(req)
+	if err := stream.SendRequestHeader(req); err != nil {
+		fail("HTTP/3 send CONNECT headers: %v", err)
+	}
+	resp, err := stream.ReadResponse()
 	if err != nil {
-		fail("HTTP/3 CONNECT round trip: %v", err)
+		fail("HTTP/3 read CONNECT response: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		fail("HTTP/3 CONNECT status=%d body=%q", resp.StatusCode, body)
 	}
-	hs, ok := resp.Body.(http3.HTTPStreamer)
-	if !ok {
-		fail("HTTP/3 response body doesn't implement HTTPStreamer")
-	}
-	stream := hs.HTTPStream()
+
 	if err := stream.SendDatagram(append([]byte{0}, payload...)); err != nil {
 		fail("HTTP/3 SendDatagram: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	got, err := stream.ReceiveDatagram(ctx)
 	if err != nil {
 		fail("HTTP/3 ReceiveDatagram: %v", err)
