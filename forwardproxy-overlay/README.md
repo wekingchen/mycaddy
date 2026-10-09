@@ -65,6 +65,14 @@ github.com/sagernet/sing-quic
 
 SagerNet `http3` 当前没有导出原版 quic-go 的 `ParseCapsule`，所以 overlay 内保留了一个最小的 RFC 9297 Capsule framing 解析辅助函数 `parseUDPCapsule`。它只替代缺失的辅助 API，不改变 UDP-over-HTTP 协议逻辑。
 
+### HTTP/2 双向流与 HTTP/3 Datagram
+
+HTTP/2 Extended CONNECT **不能**像 HTTP/1.1 一样 Hijack 底层 TCP 连接；当前实现通过 HTTP/2 的请求 Body + ResponseWriter 传输双向 Capsule，并在需要时 Flush。Go 的 HTTP/2 Extended CONNECT 必须在服务端启用 RFC 8441（`GODEBUG=http2xconnect=1`）。
+
+HTTP/3 的 CONNECT-UDP 依赖**两层**支持：QUIC 传输的 `EnableDatagrams` 以及 HTTP/3 Server 的 `EnableDatagrams`。缺一不可，所以 `scripts/apply-caddy-http3-datagrams.py` 必须在 klzgrad 的 BBRv1 补丁后执行。该脚本还将 QUIC 初始包大小设置为 **1452 字节**，供官方 NaiveProxy 客户端在典型 1500-MTU 链路上进行双层 QUIC 测试。对于路径 MTU 更低的网络不能保证兼容，必须另行验证。
+
+不满足这些条件，代码即使编译成功、模块齐全，也会在真实流量测试中失败。本项目将这些测试加入了正式发布前的验收标准。
+
 ## 构建接入点
 
 `scripts/apply-forwardproxy-udp.py` 只修改 klzgrad `forwardproxy.go` 的三个位置：
@@ -85,11 +93,12 @@ SagerNet `http3` 当前没有导出原版 quic-go 的 `ParseCapsule`，所以 ov
 4. 读取 klzgrad 的 `CADDY_VERSION`。
 5. 拉取对应版本 Caddy。
 6. 应用 klzgrad 自带的 `caddy-sing-quic-bbrv1.patch`。
-7. 用 patched Caddy + SagerNet QUIC 更新临时 `go.mod`。
-8. 执行 `go test ./...`。
-9. 用 xcaddy 将修改后的本地 forwardproxy 和其他插件一起编入最终 Caddy。
-10. 对最终 amd64/arm64 二进制检查插件依赖和 UDP-over-HTTP 特征。
-11. 全部通过后才允许主分支发布 Release。
+7. 应用 `scripts/apply-caddy-http3-datagrams.py`，启用 H3 Datagram 和双层 QUIC 包容量适配。
+8. 用 patched Caddy + SagerNet QUIC 更新临时 `go.mod` 并执行 `go test ./...`。
+9. 用 xcaddy 将修改后的 forwardproxy 和其他插件一起编入 Caddy。
+10. 对最终 amd64/arm64 二进制逐项检查插件依赖和 UDP-over-HTTP 特征。
+11. 用真实 UDP Echo 验证 H1/H2/H3，再使用官方 NaiveProxy 验证单层及双层 QUIC 代理。
+12. 全部通过后才允许主分支发布 Release。
 
 ## 最终产物验证
 
