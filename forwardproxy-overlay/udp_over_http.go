@@ -698,6 +698,7 @@ func (srv udpProxyServer) HandleStream(c io.ReadWriter, req Request, rc *net.UDP
 		return srv.HandleStreamBind(c, req, rc)
 	}
 
+	srv.Debug("UDP-over-HTTP stream bridge started", zap.String("target", string(req)))
 	done := make(chan struct{})
 
 	go func() {
@@ -706,27 +707,34 @@ func (srv udpProxyServer) HandleStream(c io.ReadWriter, req Request, rc *net.UDP
 			data := Datagram{}
 			err := data.ReceiveBuffer(c, b)
 			if err != nil {
+				srv.Debug("UDP-over-HTTP stream read ended", zap.Error(err))
 				break
 			}
 
 			if data.Type != 0 {
+				srv.Debug("UDP-over-HTTP ignored non-payload datagram", zap.Uint64("type", data.Type))
 				continue
 			}
 
 			pl := &CompressedPayload{}
 			err = pl.Parse((data.Payload.(*BytePayload)).Payload)
 			if err != nil {
+				srv.Debug("UDP-over-HTTP payload parse failed", zap.Error(err))
 				break
 			}
 
 			if pl.ContextID != 0 {
+				srv.Debug("UDP-over-HTTP ignored nonzero context", zap.Uint64("context_id", pl.ContextID))
 				continue
 			}
 
+			srv.Debug("UDP-over-HTTP received stream payload", zap.Int("bytes", len(pl.Payload)))
 			_, err = rc.Write(pl.Payload)
 			if err != nil {
+				srv.Debug("UDP-over-HTTP UDP write failed", zap.Error(err))
 				break
 			}
+			srv.Debug("UDP-over-HTTP wrote payload to UDP target", zap.Int("bytes", len(pl.Payload)))
 		}
 
 		rc.Close()
@@ -737,8 +745,10 @@ func (srv udpProxyServer) HandleStream(c io.ReadWriter, req Request, rc *net.UDP
 	for {
 		nr, err := rc.Read(b)
 		if err != nil {
+			srv.Debug("UDP-over-HTTP UDP read ended", zap.Error(err))
 			break
 		}
+		srv.Debug("UDP-over-HTTP received UDP reply", zap.Int("bytes", nr))
 
 		data := Datagram{
 			Type: 0,
@@ -748,14 +758,15 @@ func (srv udpProxyServer) HandleStream(c io.ReadWriter, req Request, rc *net.UDP
 			Payload:   b[:nr],
 		}
 
-		// data.Length = quicvarint.Len(0) + uint64(nr)
 		data.Length = 1 + uint64(nr)
 		data.Payload = pl
 
 		err = data.Send(c)
 		if err != nil {
+			srv.Debug("UDP-over-HTTP stream reply write failed", zap.Error(err))
 			break
 		}
+		srv.Debug("UDP-over-HTTP wrote reply to stream", zap.Int("bytes", nr))
 	}
 
 	<-done
