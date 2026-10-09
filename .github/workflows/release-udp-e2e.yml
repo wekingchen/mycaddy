@@ -1,0 +1,25 @@
+name: Latest Release UDP E2E（不重新编译）
+on:
+  push:
+    branches: ['test/udp-e2e']
+    paths: ['.github/workflows/release-udp-e2e.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  release-udp-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: 下载 Latest Release 原始二进制
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern 'caddy_amd64.tar.gz' --dir /tmp/release-e2e
+          tar -xzf /tmp/release-e2e/caddy_amd64.tar.gz -C /tmp/release-e2e
+          chmod +x /tmp/release-e2e/caddy_amd64
+          /tmp/release-e2e/caddy_amd64 version
+      - name: HTTP/1.1 真实 UDP Echo 往返
+        run: python3 tests/udp-over-http-e2e.py /tmp/release-e2e/caddy_amd64
