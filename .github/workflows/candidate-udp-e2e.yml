@@ -183,7 +183,7 @@ jobs:
           ORIGIN_PID=$!
 
           openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 -keyout /tmp/chain.key -out /tmp/chain.crt -subj '/CN=outer.test' -addext 'subjectAltName=DNS:outer.test,DNS:inner.test,IP:127.0.0.1' >/dev/null 2>&1
-          cat >/tmp/chain.Caddyfile <<'CADDY'
+          cat >/tmp/outer.Caddyfile <<'CADDY'
           {
               debug
               admin off
@@ -211,6 +211,16 @@ jobs:
                   }
               }
           }
+          CADDY
+          cat >/tmp/inner.Caddyfile <<'CADDY'
+          {
+              debug
+              admin off
+              auto_https disable_redirects
+              servers {
+                  protocols h1 h2 h3
+              }
+          }
           :19444, inner.test:19444 {
               tls /tmp/chain.crt /tmp/chain.key
               @naive_preamble {
@@ -228,13 +238,14 @@ jobs:
           }
           CADDY
 
-          mkdir -p /tmp/chain-data /tmp/chain-config
-          GODEBUG=http2xconnect=1 XDG_DATA_HOME=/tmp/chain-data XDG_CONFIG_HOME=/tmp/chain-config /tmp/release-e2e/caddy_amd64 run --config /tmp/chain.Caddyfile --adapter caddyfile >/tmp/chain-caddy.log 2>&1 &
+          mkdir -p /tmp/chain-data /tmp/chain-config /tmp/inner-data /tmp/inner-config
+          GODEBUG=http2xconnect=1 XDG_DATA_HOME=/tmp/inner-data XDG_CONFIG_HOME=/tmp/inner-config /tmp/release-e2e/caddy_amd64 run --config /tmp/inner.Caddyfile --adapter caddyfile >/tmp/inner-caddy.log 2>&1 &
+          INNER_CADDY_PID=$!
+          MYCADDY_QUIC_INITIAL_PACKET_SIZE=1452 GODEBUG=http2xconnect=1 XDG_DATA_HOME=/tmp/chain-data XDG_CONFIG_HOME=/tmp/chain-config /tmp/release-e2e/caddy_amd64 run --config /tmp/outer.Caddyfile --adapter caddyfile >/tmp/chain-caddy.log 2>&1 &
           CHAIN_CADDY_PID=$!
           sleep 2
           kill -0 "$CHAIN_CADDY_PID"
-          CHAIN_CA=/tmp/chain.crt
-          test -s "$CHAIN_CA"
+          kill -0 "$INNER_CADDY_PID"
 
           cat >/tmp/naive-config.json <<'JSON'
           {
@@ -269,7 +280,9 @@ jobs:
           kill "$NAIVE_PID" 2>/dev/null || true
           wait "$NAIVE_PID" 2>/dev/null || true
           kill "$CHAIN_CADDY_PID" 2>/dev/null || true
+          kill "$INNER_CADDY_PID" 2>/dev/null || true
           wait "$CHAIN_CADDY_PID" 2>/dev/null || true
+          wait "$INNER_CADDY_PID" 2>/dev/null || true
 
           # Caddy's access logger records Extended CONNECT `proto=connect-udp`
           # and authority as `uri`; the MASQUE path is not exposed in request.uri.
@@ -279,6 +292,8 @@ jobs:
           # Prove a datagram traversed the server, not just a 200 handshake.
           grep -F 'H3 CONNECT-UDP UDP target packet sent' /tmp/chain-caddy.log
           grep -F 'H3 CONNECT-UDP UDP target packet received' /tmp/chain-caddy.log
+          ! grep -Fq 'DATAGRAM frame too large' /tmp/chain-caddy.log
+          ! grep -Fq 'Preamble error: ERR_QUIC_PROTOCOL_ERROR' /tmp/naive.log
 
           echo "NAIVE_OFFICIAL_CLIENT_CONNECT_UDP_CHAIN=PASS"
 
