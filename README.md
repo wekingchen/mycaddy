@@ -20,6 +20,7 @@ klzgrad/forwardproxy:naive
 对应版本 Caddy + SagerNet quic-go / sing-quic BBRv1
         │
         ├─ 应用本仓库 UDP-over-HTTP overlay
+        ├─ 启用 Caddy HTTP/3 Datagram 与嵌套 QUIC MTU 适配
         ├─ 运行 forwardproxy 回归测试
         ├─ 加入全部自定义 Caddy 插件
         └─ 构建 linux/amd64 + linux/arm64
@@ -56,6 +57,12 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 
 注意：当 `forward_proxy` 配置了 `upstream` 时，当前 UDP-over-HTTP overlay 不接管该请求。
 
+### QUIC 的 MTU 限制
+
+NaiveProxy 的双层 QUIC 代理需要把内层 QUIC 包放入外层 HTTP/3 Datagram。Caddy 默认的 1200 字节 QUIC 初始包太小，实际会出现 `DATAGRAM frame too large`，导致首次握手超时。本项目通过严格的源码补丁将外层 QUIC 初始包容量提高至 **1452 字节**，以支持常见的 **1500 MTU** 链路，并由真实的官方客户端 E2E 检验。
+
+**注意：**嵌套 QUIC 会增加协议封装开销。低于常见 1500 MTU 的网络（例如某些隧道、VPN 或特殊移动网络）不能仅依赖此配置保证无分片运行，需要额外的路径 MTU 验证。项目不会把一个本地 Runner 的通过结果描述成任意网络条件都能保证通过。
+
 ## 内置插件
 
 以下插件均参与正式构建：
@@ -86,12 +93,13 @@ commit 6d1c91becd7d530a7cca2c26d3fd8bc70035d8ec
 3. 如果上游 Commit 与最新 Release 已记录的 Commit 相同，则定时任务跳过构建。
 4. 如果上游更新，重新拉取最新源码。
 5. 应用本仓库 UDP-over-HTTP overlay。
-6. 拉取 klzgrad 指定版本的 Caddy，并应用上游 `caddy-sing-quic-bbrv1.patch`。
+6. 拉取 klzgrad 指定版本的 Caddy，应用上游 `caddy-sing-quic-bbrv1.patch`，再启用 HTTP/3 Datagram 与嵌套 QUIC MTU 适配。
 7. 在 patched Caddy + SagerNet QUIC 环境下运行 `go test ./...`。
 8. 使用 xcaddy 加入全部插件，分别编译 `linux/amd64` 和 `linux/arm64`。
 9. 对最终二进制做功能校验。
-10. 使用最终 amd64 Caddy 二进制运行真实 UDP-over-HTTP E2E：客户端经 HTTP/1.1 Upgrade 进入 Caddy，向本机 UDP Echo Server 发包并要求收到完全相同的回包。
-11. 两个架构和 E2E 全部成功后才发布 Release。
+10. 用最终 amd64 Caddy 二进制独立验证 HTTP/1.1、HTTP/2、HTTP/3 三种 UDP Echo 往返，逐字节比较收发内容。
+11. 用官方 NaiveProxy 客户端验证单层 H2、单层 H3 和双层 QUIC-over-CONNECT-UDP，检查真实 UDP 收发与大包异常。
+12. 两个架构和全部 E2E 通过后才允许发布 Release。
 
 手动运行时可使用 `force_build=true` 强制重新构建当前上游版本。
 
@@ -120,7 +128,7 @@ connect-udp-bind over http3 is not supported yet
 
 这意味着 UDP overlay 如果没有真正进入最终二进制，构建会直接失败，不会继续发布 Release。
 
-此外，amd64 会进一步运行 `tests/udp-over-http-e2e.py`。这个测试启动**最终构建出来的 Caddy 可执行文件**和真实 UDP socket，不调用 forwardproxy 内部函数：
+此外，amd64 会运行 `tests/udp-over-http-e2e.py`、`tests/udp-e2e-go/` 以及官方 NaiveProxy 的端到端测试。这些测试均启动**最终构建出来的 Caddy 可执行文件**和真实网络 socket，不调用 forwardproxy 内部函数：
 
 ```text
 测试客户端
@@ -135,7 +143,9 @@ connect-udp-bind over http3 is not supported yet
 最终 caddy_amd64 → 测试客户端
 ```
 
-测试要求 HTTP 返回 `101 Switching Protocols`，并且 UDP Echo Server 实际收到 payload、回包后客户端收到完全相同的 payload。
+HTTP/1.1 测试必须收到 `101 Switching Protocols`；HTTP/2 必须完成 Extended CONNECT，HTTP/3 必须协商 HTTP Datagram。每一种协议都要求 UDP Echo Server 实际收到 payload，回包后客户端收到完全相同的内容。
+
+官方 NaiveProxy 客户端使用固定版本 `v154.0.8037.49-4` 进行实际 HTTP/2、HTTP/3 单层代理测试和两跳 QUIC 代理测试。两跳测试要求：**外层 QUIC → HTTP/3 CONNECT-UDP → 内层 QUIC → TCP 目标服务器**，并检查 Datagram 收发和握手是否出现尺寸限制。
 
 ## 下载与使用
 
@@ -201,6 +211,7 @@ CADDY_VERSION="$(tr -d '\r\n' < forwardproxy/CADDY_VERSION)"
 # 5. 拉取对应 Caddy，并应用 klzgrad BBRv1 补丁
 git clone --depth 1 --branch "$CADDY_VERSION" https://github.com/caddyserver/caddy.git caddy-bbr
 git -C caddy-bbr apply "$PWD/forwardproxy/caddy-sing-quic-bbrv1.patch"
+python3 scripts/apply-caddy-http3-datagrams.py caddy-bbr
 
 # 6. 用最终依赖环境测试 forwardproxy
 cd forwardproxy
