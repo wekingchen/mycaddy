@@ -185,6 +185,7 @@ jobs:
           openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 -keyout /tmp/chain.key -out /tmp/chain.crt -subj '/CN=outer.test' -addext 'subjectAltName=DNS:outer.test,DNS:inner.test,IP:127.0.0.1' >/dev/null 2>&1
           cat >/tmp/chain.Caddyfile <<'CADDY'
           {
+              debug
               admin off
               auto_https disable_redirects
               servers {
