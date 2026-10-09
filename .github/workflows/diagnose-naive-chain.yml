@@ -50,6 +50,7 @@ jobs:
 
           cat >/tmp/chain.Caddyfile <<'CADDY'
           {
+              local_certs
               admin off
               debug
               auto_https disable_redirects
