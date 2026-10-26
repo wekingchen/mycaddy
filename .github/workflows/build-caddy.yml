@@ -154,9 +154,19 @@ jobs:
           git -C caddy-bbr fetch --depth 1 origin "$CADDY_VERSION"
           git -C caddy-bbr checkout --detach FETCH_HEAD
 
-          git -C caddy-bbr apply "$GITHUB_WORKSPACE/forwardproxy/caddy-sing-quic-bbrv1.patch"
+          # 跟随同一上游 Commit 的配套补丁，避免前向代理引用新 Caddy API 时
+          # 使用旧版 Caddy 导致编译失败（如 IdleTimeoutsFromContext）。
+          # 一并检查补丁，任一补丁不能安全应用就中止，不静默忽略新能力。
+          upstream_patches=("$GITHUB_WORKSPACE/forwardproxy/caddy-sing-quic-bbrv1.patch")
+          if [[ -f "$GITHUB_WORKSPACE/forwardproxy/caddy-read-idle-timeout.patch" ]]; then
+            upstream_patches+=("$GITHUB_WORKSPACE/forwardproxy/caddy-read-idle-timeout.patch")
+            echo "📌 上游含空闲超时 API 回移补丁，将一并应用"
+          fi
+          git -C caddy-bbr apply --check "${upstream_patches[@]}"
+          git -C caddy-bbr apply "${upstream_patches[@]}"
+
           python3 "$GITHUB_WORKSPACE/scripts/apply-caddy-http3-datagrams.py" "$GITHUB_WORKSPACE/caddy-bbr"
-          echo "✅ 已应用 klzgrad 的 sing-quic BBRv1 补丁并启用 HTTP/3 Datagram"
+          echo "✅ 已应用 klzgrad 的全部当前配套补丁并启用 HTTP/3 Datagram"
 
       - name: 运行 forwardproxy 回归测试
         working-directory: forwardproxy
