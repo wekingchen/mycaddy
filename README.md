@@ -168,7 +168,7 @@ connect-udp-bind over http3 is not supported yet
 
 HTTP/1.1 测试必须收到 `101 Switching Protocols`；HTTP/2 必须完成 Extended CONNECT，HTTP/3 必须协商 HTTP Datagram。每一种协议都要求 UDP Echo Server 实际收到 payload，回包后客户端收到完全相同的内容。
 
-官方 NaiveProxy 客户端使用固定版本 `v154.0.8037.49-4` 进行实际 HTTP/2、HTTP/3 单层代理测试和两跳 QUIC 代理测试。两跳测试要求：**外层 QUIC → HTTP/3 CONNECT-UDP → 内层 QUIC → TCP 目标服务器**，并检查 Datagram 收发和握手是否出现尺寸限制。
+官方 NaiveProxy 客户端从 `klzgrad/naiveproxy` 的 **Latest 正式 Release** 获取，按 Release 附件 SHA256 校验后，用于实际 HTTP/2、HTTP/3 单层代理测试和两跳 QUIC 代理测试（构建及发布后二次验收共用 `scripts/download-official-naive.sh`）。这样不会因旧版附件被删除而失败，也不会继续验证已被安全更新取代的旧客户端。两跳测试要求：**外层 QUIC → HTTP/3 CONNECT-UDP → 内层 QUIC → TCP 目标服务器**，并检查 Datagram 收发和握手是否出现尺寸限制。
 
 ## 下载与使用
 
@@ -266,7 +266,7 @@ go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 
 ### 上游重定向探测抵抗回归测试兼容
 
-Caddy v2.11.7 / 新版 Go 在明文 HTTP 重定向端口接收到非法 `CONNECT` 时，可能直接关闭连接并返回 `EOF`。上游 `TestConnectAuthWrongProbeResistRedir` 原本遇到任何 EOF 都直接失败。构建前运行 `scripts/patch-forwardproxy-redir-test.py`，仅调整该测试的**两组对照**：探测抵抗服务器和无代理的参考服务器同时 EOF 可视为一致；一方 EOF 或出现其他错误仍判为失败，正常 HTTP 响应仍比较状态与内容。不跳过该测试，也不改变线上 forwardproxy 行为。
+Caddy v2.11.7 / 新版 Go 在明文 HTTP 重定向端口接收到非法 `CONNECT` 时，可能直接关闭连接并返回 `EOF`。上游 `TestConnectAuthWrongProbeResistRedir` 原本遇到任何 EOF 都直接失败。构建前运行 `scripts/patch-forwardproxy-redir-test.py`，仅调整该测试的**两组对照**：探测抵抗服务器和无代理的参考服务器同时关闭连接（`EOF` 或 `http: server closed idle connection`）可视为一致；一方关闭而另一方正常响应、或出现其他错误仍判为失败，正常 HTTP 响应仍比较状态与内容。不跳过该测试，也不改变线上 forwardproxy 行为。
 
 ## 上游兼容策略
 
