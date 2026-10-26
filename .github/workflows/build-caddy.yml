@@ -20,6 +20,7 @@ on:
       - 'forwardproxy-overlay/forwardproxy_udp_test.go'
       - 'scripts/apply-forwardproxy-udp.py'
       - 'scripts/patch-forwardproxy-redir-test.py'
+      - 'scripts/download-official-naive.sh'
       - 'scripts/apply-caddy-http3-datagrams.py'
       - 'tests/udp-over-http-e2e.py'
       - 'tests/udp-e2e-go/**'
@@ -222,20 +223,11 @@ jobs:
 
           echo "✅ HTTP/1.1 / HTTP/2 / HTTP/3 真实 UDP Echo 全部通过"
 
-      - name: 下载官方 NaiveProxy 测试客户端（amd64）
+      - name: 下载并校验官方最新 NaiveProxy 测试客户端（amd64）
         if: ${{ matrix.arch == 'amd64' }}
-        run: |
-          set -euo pipefail
-          NAIVE_VERSION="v154.0.8037.49-4"
-          mkdir -p /tmp/naive
-          url="https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-linux-x64.tar.xz"
-          curl -fsSL --retry 3 "$url" -o /tmp/naive.tar.xz
-          tar -xJf /tmp/naive.tar.xz -C /tmp/naive
-          NAIVE_BIN="$(find /tmp/naive -type f -name naive | head -n1)"
-          test -n "$NAIVE_BIN" && test -f "$NAIVE_BIN"
-          chmod +x "$NAIVE_BIN"
-          echo "NAIVE_BIN=$NAIVE_BIN" >> "$GITHUB_ENV"
-          echo "✅ 已准备官方 NaiveProxy ${NAIVE_VERSION}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/download-official-naive.sh /tmp/naive
 
       - name: 官方 NaiveProxy 真实链路 E2E（H2/H3 + 双层 QUIC）
         if: ${{ matrix.arch == 'amd64' }}
