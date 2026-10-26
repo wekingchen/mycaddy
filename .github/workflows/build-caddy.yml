@@ -19,6 +19,7 @@ on:
       - 'forwardproxy-overlay/udp_over_http.go'
       - 'forwardproxy-overlay/forwardproxy_udp_test.go'
       - 'scripts/apply-forwardproxy-udp.py'
+      - 'scripts/patch-forwardproxy-redir-test.py'
       - 'scripts/apply-caddy-http3-datagrams.py'
       - 'tests/udp-over-http-e2e.py'
       - 'tests/udp-e2e-go/**'
@@ -143,6 +144,11 @@ jobs:
           python3 scripts/apply-forwardproxy-udp.py forwardproxy/forwardproxy.go
 
           echo "✅ UDP-over-HTTP overlay 已应用"
+
+      - name: 保留对照校验并适配上游 CONNECT 重定向测试
+        run: |
+          set -euo pipefail
+          python3 scripts/patch-forwardproxy-redir-test.py forwardproxy/probe_resist_test.go
 
       - name: 准备 klzgrad 指定的 Caddy + BBRv1
         env:
