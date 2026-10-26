@@ -227,6 +227,8 @@ git clone --branch naive --depth 1 https://github.com/klzgrad/forwardproxy.git f
 cp forwardproxy-overlay/udp_over_http.go forwardproxy/
 cp forwardproxy-overlay/forwardproxy_udp_test.go forwardproxy/
 python3 scripts/apply-forwardproxy-udp.py forwardproxy/forwardproxy.go
+# 只修正上游既有测试对 HTTP 重定向端口 EOF 的对照判定
+python3 scripts/patch-forwardproxy-redir-test.py forwardproxy/probe_resist_test.go
 
 # 4. 读取 klzgrad 指定 Caddy 版本
 CADDY_VERSION="$(tr -d '\r\n' < forwardproxy/CADDY_VERSION)"
@@ -261,6 +263,10 @@ go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 从 klzgrad/forwardproxy:naive 的 2026-10-22 更新起，上游 forwardproxy 使用 `caddyhttp.IdleTimeoutsFromContext` 为已认证 H2/H3 隧道设置较长空闲超时。此 API 不在它仍指定的 Caddy v2.11.7 原版中，上游同时提供了 `caddy-read-idle-timeout.patch` 回移该 API。构建必须与 BBRv1 补丁**一起应用上游提供的配套补丁**，否则 `go test ./...` 会报 `undefined: caddyhttp.IdleTimeoutsFromContext`。
 
 工作流只从本次拉取的同一上游 Commit 读取补丁；若上游未来移除该补丁，则不再套用旧文件。`git apply --check` 严格检查适配，不通过直接失败，不擅自跳过上游新增的空闲超时行为。
+
+### 上游重定向探测抵抗回归测试兼容
+
+Caddy v2.11.7 / 新版 Go 在明文 HTTP 重定向端口接收到非法 `CONNECT` 时，可能直接关闭连接并返回 `EOF`。上游 `TestConnectAuthWrongProbeResistRedir` 原本遇到任何 EOF 都直接失败。构建前运行 `scripts/patch-forwardproxy-redir-test.py`，仅调整该测试的**两组对照**：探测抵抗服务器和无代理的参考服务器同时 EOF 可视为一致；一方 EOF 或出现其他错误仍判为失败，正常 HTTP 响应仍比较状态与内容。不跳过该测试，也不改变线上 forwardproxy 行为。
 
 ## 上游兼容策略
 
