@@ -19,8 +19,6 @@ jobs:
     name: Latest Release 三协议真实 UDP 验证
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      NAIVE_VERSION: v154.0.8037.49-4
 
     steps:
       - name: 检出 E2E 测试
@@ -52,18 +50,10 @@ jobs:
           echo "CADDY_RELEASE=$RELEASE_TAG" | tee -a "$GITHUB_ENV"
           /tmp/release-e2e/caddy_amd64 version
 
-      - name: 下载官方 NaiveProxy 客户端
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/naive
-          url="https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-linux-x64.tar.xz"
-          curl -fL "$url" -o /tmp/naive.tar.xz
-          tar -xJf /tmp/naive.tar.xz -C /tmp/naive
-          NAIVE_BIN="$(find /tmp/naive -type f -name naive | head -n1)"
-          test -n "$NAIVE_BIN"
-          chmod +x "$NAIVE_BIN"
-          echo "NAIVE_BIN=$NAIVE_BIN" | tee -a "$GITHUB_ENV"
-          "$NAIVE_BIN" --version
+      - name: 下载并校验官方最新 NaiveProxy 客户端
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/download-official-naive.sh /tmp/naive
 
       - name: 准备本地证书、UDP Echo 与协议测试 Caddy
         run: |
