@@ -14,7 +14,8 @@ klzgrad/forwardproxy:naive
         │
         ├─ CADDY_VERSION
         ├─ Naive padding
-        └─ caddy-sing-quic-bbrv1.patch
+        ├─ caddy-sing-quic-bbrv1.patch
+        └─ caddy-read-idle-timeout.patch（上游提供时应用）
         │
         ▼
 对应版本 Caddy + SagerNet quic-go / sing-quic BBRv1
@@ -230,9 +231,14 @@ python3 scripts/apply-forwardproxy-udp.py forwardproxy/forwardproxy.go
 # 4. 读取 klzgrad 指定 Caddy 版本
 CADDY_VERSION="$(tr -d '\r\n' < forwardproxy/CADDY_VERSION)"
 
-# 5. 拉取对应 Caddy，并应用 klzgrad BBRv1 补丁
+# 5. 拉取对应 Caddy，并应用 klzgrad 配套补丁（包括上游新版的空闲超时 API）
 git clone --depth 1 --branch "$CADDY_VERSION" https://github.com/caddyserver/caddy.git caddy-bbr
-git -C caddy-bbr apply "$PWD/forwardproxy/caddy-sing-quic-bbrv1.patch"
+PATCHES=("$PWD/forwardproxy/caddy-sing-quic-bbrv1.patch")
+if [[ -f "$PWD/forwardproxy/caddy-read-idle-timeout.patch" ]]; then
+  PATCHES+=("$PWD/forwardproxy/caddy-read-idle-timeout.patch")
+fi
+git -C caddy-bbr apply --check "${PATCHES[@]}"
+git -C caddy-bbr apply "${PATCHES[@]}"
 python3 scripts/apply-caddy-http3-datagrams.py caddy-bbr
 
 # 6. 用最终依赖环境测试 forwardproxy
@@ -249,6 +255,12 @@ go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 ```
 
 最终 xcaddy 插件参数请直接参考 `.github/workflows/build-caddy.yml`，避免 README 与实际构建参数长期出现两份不同的“真相”。
+
+### klzgrad 上游补丁同步
+
+从 klzgrad/forwardproxy:naive 的 2026-10-22 更新起，上游 forwardproxy 使用 `caddyhttp.IdleTimeoutsFromContext` 为已认证 H2/H3 隧道设置较长空闲超时。此 API 不在它仍指定的 Caddy v2.11.7 原版中，上游同时提供了 `caddy-read-idle-timeout.patch` 回移该 API。构建必须与 BBRv1 补丁**一起应用上游提供的配套补丁**，否则 `go test ./...` 会报 `undefined: caddyhttp.IdleTimeoutsFromContext`。
+
+工作流只从本次拉取的同一上游 Commit 读取补丁；若上游未来移除该补丁，则不再套用旧文件。`git apply --check` 严格检查适配，不通过直接失败，不擅自跳过上游新增的空闲超时行为。
 
 ## 上游兼容策略
 
