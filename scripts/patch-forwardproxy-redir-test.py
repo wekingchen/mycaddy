@@ -45,8 +45,10 @@ def replace(match: re.Match[str]) -> str:
         f"{indent}// get response from reference server without forwardproxy and compare them\n"
         f"{indent}responseReference, referenceErr := {match.group('reference')}\n"
         f"{indent}if probeErr != nil || referenceErr != nil {{\n"
-        f"{indent}\tif errors.Is(probeErr, io.EOF) && errors.Is(referenceErr, io.EOF) {{\n"
-        f"{indent}\t\tcontinue // HTTP 重定向端口对两种服务器均关闭 CONNECT，行为一致\n"
+        f'{indent}\tprobeClosed := errors.Is(probeErr, io.EOF) || (probeErr != nil && probeErr.Error() == "http: server closed idle connection")\n'
+        f'{indent}\treferenceClosed := errors.Is(referenceErr, io.EOF) || (referenceErr != nil && referenceErr.Error() == "http: server closed idle connection")\n'
+        f"{indent}\tif probeClosed && referenceClosed {{\n"
+        f"{indent}\t\tcontinue // 两种关闭错误均表示未返回 HTTP 响应；仍要求两端一致\n"
         f"{indent}\t}}\n"
         f'{indent}\tt.Fatalf("HTTP 重定向 CONNECT 对照不一致：probe=%v reference=%v", probeErr, referenceErr)\n'
         f"{indent}}}\n"
