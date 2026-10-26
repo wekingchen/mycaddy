@@ -55,5 +55,12 @@ def replace(match: re.Match[str]) -> str:
 updated, count = pattern.subn(replace, test_body)
 if count != 2:
     raise SystemExit(f"上游重定向测试锚点应有 2 处，实际 {count} 处，拒绝修改")
+# 上面的两处错误变量改名后，比较响应时使用局部 err 声明。
+# 避免依赖之前已被删去的 err 声明，保留原有响应字段逐项比较。
+old_compare = "if err = responsesAreEqual(responseProbeResist, responseReference); err != nil {"
+new_compare = "if err := responsesAreEqual(responseProbeResist, responseReference); err != nil {"
+if updated.count(old_compare) != 2:
+    raise SystemExit("上游响应对照语句不是两处，拒绝修改")
+updated = updated.replace(old_compare, new_compare)
 path.write_text(before + begin + updated + end + after, encoding="utf-8")
 print("✅ 重定向 CONNECT 探测抵抗测试仍执行，并同时校验对照服务器 EOF/响应一致性")
